@@ -1,0 +1,19 @@
+# Eval set: ideas of varying difficulty for regression runs (`hw eval run --tag <tag>`).
+# Every case has the line in quotes so the verbatim check is unambiguous.
+cases:
+  - id: en_short
+    text: 'Rainy night. A taxi driver glances in the mirror and asks: "Are you sure this is the address?"'
+  - id: en_long_line
+    text: 'A nurse closes the file, looks up and says: "Your mother asked me to tell you she was never angry, not even at the end."'
+  - id: en_numbers
+    text: 'An old man counts coins on a diner table and mutters: "Forty-two dollars and 7 cents, same as last time."'
+  - id: en_name
+    text: 'A teenager at a bus stop reads a text and whispers: "Marcus, you promised you would call first."'
+  - id: en_two_people
+    text: 'Two climbers on a ledge at dawn; the younger one laughs and says: "Next time, you carry the rope."'
+  - id: en_no_quotes
+    text: 'A lighthouse keeper watches the storm roll in. He has not slept in two days. The light must not go out tonight.'
+  - id: uk_short
+    text: 'Дощ, нічне місто. Таксист дивиться у дзеркало й питає: "Ти впевнена, що це та адреса?"'
+  - id: uk_number
+    text: 'Жінка на кухні дивиться на годинник і каже: "О 7 ранку його вже не буде вдома."'
