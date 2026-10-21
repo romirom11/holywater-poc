@@ -51,6 +51,7 @@ extend-exclude = ["docs"]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "PL", "T20", "ANN"]
 ignore = [
     "PLR0913",  # too many arguments — provider adapters legitimately take many
+    "PLR0917",  # too many positional arguments — Prefect task signatures
     "ANN401",   # Any in **kwargs for thin wrappers
     "RUF001",   # Ukrainian text and typographic quotes are intentional in this project
     "RUF002",
@@ -58,7 +59,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN", "PLR2004", "S101"]
+"tests/**" = ["ANN", "PLR2004", "S101", "PLC0415"]
+# Lazy imports keep CLI startup fast and make real providers optional in --dry-run.
+"src/holywater/cli.py" = ["PLC0415"]
+"src/holywater/flows/wiring.py" = ["PLC0415"]
 
 [tool.mypy]
 python_version = "3.12"

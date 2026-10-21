@@ -29,6 +29,8 @@ _SHARED_PROCESSORS: list[Any] = [
 ]
 
 _configured = False
+# Root plus loggers that do not propagate to root (Prefect keeps its own handlers).
+_SINK_LOGGERS = ("", "prefect")
 
 
 def configure_logging(level: str = "INFO", *, json_console: bool | None = None) -> None:
@@ -63,7 +65,7 @@ def configure_logging(level: str = "INFO", *, json_console: bool | None = None) 
     logging.captureWarnings(True)
     # Noisy third-party loggers stay at INFO regardless of our level.
     for name in ("httpx", "httpcore", "urllib3"):
-        logging.getLogger(name).setLevel(max(logging.INFO, root.level))
+        logging.getLogger(name).setLevel(max(logging.WARNING, root.level))
 
     _configured = True
 
@@ -89,19 +91,35 @@ def add_file_sink(path: Path, level: str = "DEBUG") -> logging.Handler:
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setLevel(level.upper())
     handler.setFormatter(_formatter(json_output=True))
-    logging.getLogger().addHandler(handler)
+    for name in _SINK_LOGGERS:
+        logging.getLogger(name).addHandler(handler)
     return handler
 
 
 def remove_sink(handler: logging.Handler) -> None:
-    logging.getLogger().removeHandler(handler)
+    for name in _SINK_LOGGERS:
+        logging.getLogger(name).removeHandler(handler)
     handler.flush()
     handler.close()
+
+
+def remove_foreign_console_handlers() -> None:
+    """Drop console handlers other libraries (Prefect) attach to the root logger.
+
+    Prefect installs its own root console handler when it is imported, which would print every
+    one of our records a second time. Its own `prefect.*` loggers keep their handlers.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        is_ours = getattr(handler, "_hw_console", False) or isinstance(handler, logging.FileHandler)
+        if not is_ours and isinstance(handler, logging.StreamHandler):
+            root.removeHandler(handler)
 
 
 @contextmanager
 def run_log_file(path: Path) -> Iterator[None]:
     """Scope a per-run JSONL sink to a `with` block."""
+    remove_foreign_console_handlers()
     handler = add_file_sink(path)
     try:
         yield

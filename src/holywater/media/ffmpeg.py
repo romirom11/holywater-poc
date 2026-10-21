@@ -218,7 +218,6 @@ class FFmpeg:
         height: int,
         with_audio: bool = True,
         fps: int = DEFAULT_FPS,
-        label: str | None = None,
     ) -> MediaInfo:
         """Generate a test pattern clip (optionally with a tone) without any external model."""
         args: list[str] = [
@@ -234,9 +233,6 @@ class FFmpeg:
         if with_audio:
             args += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]
         vf = "format=yuv420p"
-        if label:
-            safe = label.replace("'", "").replace(":", "\\:")
-            vf = f"drawtext=text='{safe}':fontsize=36:fontcolor=white:x=(w-tw)/2:y=(h-th)/2," + vf
         args += ["-vf", vf, "-t", f"{duration_s:.3f}", *_ENCODE_ARGS, str(dst)]
         self._run(args, op="synth_clip")
         return self.probe(dst)
