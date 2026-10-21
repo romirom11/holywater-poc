@@ -1,0 +1,76 @@
+[project]
+name = "holywater-poc"
+version = "0.1.0"
+description = "Idea -> script -> generated vertical video with a verbatim spoken line"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "prefect>=3.4",
+    "fal-client>=0.5",
+    "openai>=1.60",
+    "sqlmodel>=0.0.22",
+    "structlog>=24.4",
+    "typer>=0.15",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "jiwer>=3.0",
+]
+
+[project.optional-dependencies]
+judge = ["typesafe-sdk>=0.1"]
+
+[project.scripts]
+hw = "holywater.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "types-PyYAML>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/holywater"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "PL", "T20", "ANN"]
+ignore = [
+    "PLR0913",  # too many arguments — provider adapters legitimately take many
+    "ANN401",   # Any in **kwargs for thin wrappers
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "PLR2004", "S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["fal_client.*", "jiwer.*", "typesafe.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "integration: needs ffmpeg or network",
+]
+filterwarnings = ["error::DeprecationWarning:holywater.*"]

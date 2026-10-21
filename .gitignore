@@ -1,0 +1,28 @@
+# secrets
+.env
+
+# run artifacts
+runs/
+samples/*.mp4
+evals/results/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# prefect local server
+.prefect/
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
