@@ -56,8 +56,10 @@ def configure_logging(level: str = "INFO", *, json_console: bool | None = None) 
     root.addHandler(console)
     root.setLevel(level.upper())
 
-    # Route every warnings.warn() through logging; never silence them.
+    # Route every warnings.warn() through logging; never silence them. Toggling off/on
+    # re-installs the hook even if something (e.g. pytest) swapped `showwarning` meanwhile.
     warnings.simplefilter("always")
+    logging.captureWarnings(False)
     logging.captureWarnings(True)
     # Noisy third-party loggers stay at INFO regardless of our level.
     for name in ("httpx", "httpcore", "urllib3"):
