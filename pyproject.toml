@@ -20,7 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-judge = ["typesafe-sdk>=0.1"]
+judge = [
+    "typesafe-sdk>=0.7",
+]
 
 [project.scripts]
 hw = "holywater.cli:app"
@@ -63,6 +65,7 @@ ignore = [
 # Lazy imports keep CLI startup fast and make real providers optional in --dry-run.
 "src/holywater/cli.py" = ["PLC0415"]
 "src/holywater/flows/wiring.py" = ["PLC0415"]
+"src/holywater/providers/typesafe_judge.py" = ["PLC0415"]  # optional typesafe-sdk
 
 [tool.mypy]
 python_version = "3.12"

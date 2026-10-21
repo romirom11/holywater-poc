@@ -726,7 +726,7 @@ requires-dist = [
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "typer", specifier = ">=0.15" },
-    { name = "typesafe-sdk", marker = "extra == 'judge'", specifier = ">=0.1" },
+    { name = "typesafe-sdk", marker = "extra == 'judge'", specifier = ">=0.7" },
 ]
 provides-extras = ["judge"]
 
