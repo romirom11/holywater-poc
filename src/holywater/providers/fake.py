@@ -19,7 +19,7 @@ from holywater.domain.idea import IdeaInput
 from holywater.domain.script import CHARS_PER_SECOND
 from holywater.media import FFmpeg
 from holywater.media.ffmpeg import VERTICAL_SIZES
-from holywater.observability.errors import RetryableProviderError
+from holywater.observability.errors import FatalProviderError, RetryableProviderError
 from holywater.providers.base import (
     JudgeAnswer,
     LipsyncRequest,
@@ -123,27 +123,47 @@ def _pick_line(idea_text: str) -> str:
 
 @dataclass
 class FakeVideo:
-    """Synthesizes a test-pattern clip with ffmpeg and records the "spoken" line in a sidecar."""
+    """Synthesizes a test-pattern clip with ffmpeg and records the "spoken" line in a sidecar.
+
+    Failure knobs (all counted in `calls`): `fail_times` transient errors first, `reject_times`
+    content-policy (fatal) rejections first, `fail_from_call` transient errors from that call on,
+    `duration_offset_s` applied to the first `duration_offset_times` clips (None = all).
+    """
 
     ffmpeg: FFmpeg = field(default_factory=FFmpeg)
     fail_times: int = 0
+    reject_times: int = 0
+    fail_from_call: int | None = None
     speech_mutator: Callable[[str, int], str] | None = None
     duration_offset_s: float = 0.0
+    duration_offset_times: int | None = None
     calls: int = 0
+    prompts: list[str] = field(default_factory=list)
 
     def generate(self, request: VideoRequest, *, dest: Path) -> VideoResult:
         self.calls += 1
-        if self.calls <= self.fail_times:
+        self.prompts.append(request.prompt)
+        if self.calls <= self.fail_times or (
+            self.fail_from_call is not None and self.calls >= self.fail_from_call
+        ):
             msg = f"simulated transient failure #{self.calls}"
             raise RetryableProviderError(msg, provider="fake", model=request.model, status_code=503)
+        if self.calls <= self.reject_times:
+            msg = f"simulated content policy rejection #{self.calls}"
+            raise FatalProviderError(msg, provider="fake", model=request.model, status_code=400)
         width, height = VERTICAL_SIZES[request.resolution.value]
         spoken = _line_from_prompt(request.prompt)
         if spoken and self.speech_mutator is not None:
             spoken = self.speech_mutator(spoken, self.calls)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        offset = (
+            self.duration_offset_s
+            if self.duration_offset_times is None or self.calls <= self.duration_offset_times
+            else 0.0
+        )
         self.ffmpeg.synth_clip(
             dest,
-            duration_s=request.duration_s + self.duration_offset_s,
+            duration_s=request.duration_s + offset,
             width=width,
             height=height,
             with_audio=request.generate_audio,
@@ -171,6 +191,18 @@ def write_sidecar(media: Path, text: str) -> Path:
 def read_sidecar(media: Path) -> str | None:
     sidecar = media.with_name(media.name + SPEECH_SIDECAR_SUFFIX)
     return sidecar.read_text(encoding="utf-8") if sidecar.is_file() else None
+
+
+def _assembled_speech(media: Path) -> str | None:
+    """What the assembled final "contains": the TTS line(s) mixed in by `assemble`.
+
+    ffmpeg output has no sidecar, so look for the run's `audio/line_*` sidecars next to it.
+    """
+    for root in (media.parent, media.parent.parent):
+        texts = sorted((root / "audio").glob(f"*{SPEECH_SIDECAR_SUFFIX}"))
+        if texts:
+            return " ".join(t.read_text(encoding="utf-8") for t in texts)
+    return None
 
 
 # -- TTS / STT / lipsync ----------------------------------------------------------------------
@@ -211,6 +243,8 @@ class FakeSTT:
                 text = read_sidecar(candidate)
                 if text is not None:
                     break
+        if text is None and request.source_path is not None:
+            text = _assembled_speech(request.source_path)
         return STTResult(text=text or "", model=model, language=request.language)
 
 
@@ -232,6 +266,7 @@ class FakeJudge:
     """Scripted answers keyed by a substring of the question; defaults are permissive."""
 
     enabled: bool = True
+    available: bool = True  # False simulates Jev being unreachable mid-run
     bool_answers: dict[str, float] = field(default_factory=dict)
     choice_answers: dict[str, str] = field(default_factory=dict)
     score_answers: dict[str, int] = field(default_factory=dict)
@@ -239,6 +274,8 @@ class FakeJudge:
 
     def ask_bool(self, state: str, question: str) -> JudgeAnswer:
         self.calls.append(question)
+        if not self.available:
+            return JudgeAnswer(question=question, answer="unknown", available=False)
         default = _lookup(_BOOL_DEFAULTS, question, 0.05)
         p_yes = _lookup(self.bool_answers, question, default)
         answer = "yes" if p_yes >= _YES_THRESHOLD else "no"
@@ -252,6 +289,8 @@ class FakeJudge:
 
     def ask_choice(self, state: str, question: str, options: Sequence[str]) -> JudgeAnswer:
         self.calls.append(question)
+        if not self.available:
+            return JudgeAnswer(question=question, answer="unknown", available=False)
         answer = _lookup(self.choice_answers, question, options[0])
         probs = {o: (0.9 if o == answer else 0.1 / max(1, len(options) - 1)) for o in options}
         return JudgeAnswer(
@@ -264,6 +303,8 @@ class FakeJudge:
 
     def ask_score(self, state: str, question: str, *, levels: int) -> JudgeAnswer:
         self.calls.append(question)
+        if not self.available:
+            return JudgeAnswer(question=question, answer="unknown", available=False)
         score = _lookup(self.score_answers, question, levels)
         probs = {
             str(i): (0.9 if i == score else 0.1 / max(1, levels - 1)) for i in range(1, levels + 1)

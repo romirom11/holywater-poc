@@ -189,14 +189,31 @@ class FFmpeg:
         )
         return self.probe(dst)
 
-    def extract_audio(self, src: Path, dst: Path, *, sample_rate: int = 16000) -> MediaInfo:
-        """Mono 16-bit WAV of the audio track — the input every STT vendor accepts."""
+    def extract_audio(
+        self,
+        src: Path,
+        dst: Path,
+        *,
+        sample_rate: int = 16000,
+        start_s: float | None = None,
+        duration_s: float | None = None,
+    ) -> MediaInfo:
+        """Mono 16-bit WAV of the audio track — the input every STT vendor accepts.
+
+        `start_s`/`duration_s` cut a window (used to verify only the line segment of the final).
+        """
+        window: list[str] = []
+        if start_s is not None:
+            window += ["-ss", f"{max(0.0, start_s):.3f}"]
+        if duration_s is not None:
+            window += ["-t", f"{max(0.1, duration_s):.3f}"]
         self._run(
             [
                 self.ffmpeg_bin,
                 "-y",
                 "-v",
                 "error",
+                *window,
                 "-i",
                 str(src),
                 "-vn",

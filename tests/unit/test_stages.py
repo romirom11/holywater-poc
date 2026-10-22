@@ -30,7 +30,7 @@ def test_write_script_uses_verbatim_line_from_input() -> None:
     result = write_script(idea, ScriptWriterDeps(llm=FakeLLM(), config=LLMConfig(model="m")))
     assert result.attempts == 1
     assert result.script.dialogue.text == "Are you SURE this is the address?"
-    assert result.prompt_version == "scriptwriter@1"
+    assert result.prompt_version == "scriptwriter@2"
 
 
 def test_write_script_retries_on_paraphrase_then_succeeds() -> None:
@@ -73,6 +73,30 @@ def test_preflight_passes_with_permissive_judge() -> None:
     assert len(result.decisions) == 2 * 2 + 1  # safety + filmability per shot, + line fits
 
 
+def test_preflight_skipped_when_judge_unavailable_mid_run() -> None:
+    judge = FakeJudge(available=False)
+    result = preflight_script(_script(), PreflightDeps(judge=judge, config=JudgeConfig()))
+    assert result.ok and result.skipped and len(judge.calls) == 5
+
+
+def test_soften_shot_replaces_only_the_rejected_shot() -> None:
+    from holywater.stages.write_script import soften_shot
+
+    script = _script()
+    llm = FakeLLM()
+    result = soften_shot(
+        script,
+        1,
+        reason="content policy: weapons",
+        idea=fake_idea(),
+        deps=ScriptWriterDeps(llm=llm, config=LLMConfig(model="m")),
+    )
+    assert llm.calls == 1
+    assert result.script.shots[0].visual_prompt == "Establishing shot derived from the idea."
+    assert result.script.shots[1] == script.shots[1]  # the dialogue shot is untouched
+    assert result.script.dialogue == script.dialogue  # and so is the verbatim line
+
+
 def test_preflight_flags_safety_and_filmability() -> None:
     judge = FakeJudge(bool_answers={"safety_risk": 0.9}, score_answers={"filmability": 2})
     cfg = JudgeConfig(preflight=PreflightConfig(safety_risk_threshold=0.7, min_filmability_score=3))
@@ -112,7 +136,15 @@ def test_build_shot_prompt_variants() -> None:
 class _StubFFmpeg:
     """Unit tests never spawn ffmpeg: audio extraction just creates an empty wav file."""
 
-    def extract_audio(self, src: Path, dst: Path, *, sample_rate: int = 16000) -> MediaInfo:
+    def extract_audio(
+        self,
+        src: Path,
+        dst: Path,
+        *,
+        sample_rate: int = 16000,
+        start_s: float | None = None,
+        duration_s: float | None = None,
+    ) -> MediaInfo:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(b"")
         return MediaInfo(

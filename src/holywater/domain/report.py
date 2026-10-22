@@ -101,6 +101,9 @@ class RunReport(BaseModel):
     latency_s: float | None
     stages: list[StageMetrics] = Field(default_factory=list)
     shots: list[ShotMetrics] = Field(default_factory=list)
+    # R4 evidence: the dialogue shot's final clip (or, for tts_overlay, the assembled final) passed
+    # the STT/WER gate. False when STT was unavailable (`unverified`) even if the run finished.
+    line_verified: bool = False
     shots_regenerated: int = 0  # extra generation cycles after a failed quality gate
     retries_total: int = 0  # sum of stage retries: transient provider failures that were retried
     judge_decisions: int = 0

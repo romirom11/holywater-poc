@@ -18,14 +18,16 @@
                       │                       ✘ exhausted / wrong_language → switch to tts_overlay (→ 2a, 3 without dialogue)
                       ▼                                           ▼
                 [5] assemble ◄────────────────────────────────────┘
-                 concat → (mux TTS) → (lipsync) → loudnorm → final.mp4
+                 normalize → (mux TTS → lipsync, dialogue shot only) → concat → loudnorm → final.mp4
                       │
-                      ▼
+                      ▼  tts_overlay only: [4] verify_speech on the line window of final.mp4
                 [6] report → report.json, runs.status = done
 ```
 
-For the `native` strategy stage 2a is skipped (`skipped`); for `tts_overlay` stage 4 runs on the final file as a
-sanity check (TTS is deterministic, but STT confirms the mux didn't break the audio).
+For the `native` strategy stage 2a is recorded as `skipped` (it runs for real only if a shot falls back to TTS).
+For `tts_overlay` stage 4 runs once more on the assembled final — only the line window, with 0.5 s of margin — as a
+sanity check: TTS is deterministic, but STT confirms the mux/lipsync/loudnorm did not break the audio. A failed check
+fails the run (`QualityGateError`, stage `verify_speech`); an unavailable STT leaves `report.line_verified=false`.
 
 ## 2. Artifacts per stage
 
@@ -96,8 +98,10 @@ For `tts_overlay`: the same template, but `[Audio] no dialogue, no speech; {ambi
 
 ## 5. State and stitching stages together
 
-- Each stage receives its input through `RunRepository` (artifact paths, previous decisions) and writes its artifact to disk + DB rows in a single transaction with the stage status change.
-- A Prefect task is a thin wrapper: `repo.start_stage → call stage → repo.finish_stage → return artifact ref`. Tasks pass pydantic models with paths/ids between them, not binary data.
+- Stages are pure functions (`stages/*`): they take explicit inputs and provider deps, write their media file, and return a pydantic artifact with the path. They never touch SQL.
+- The flow owns the state: `_stage(ctx, name)` marks `stages.start/finish` around each task, and right after a task returns the flow writes the artifact's rows (`shot_attempts`, `speech_verifications`, `costs`, …). Each write is its own small transaction; there is no multi-table transaction, and a crash between two writes is recovered by resume (below), not by rollback.
+- A Prefect task is a thin wrapper around one stage call; retries with backoff live on the task, decisions live in the flow. Tasks pass pydantic models with paths/ids between them, not binary data.
+- The current `Script` lives in the flow context and on disk (`script.json`); every tactic that changes it (prompt softening, widening the line window, extending a shot) rewrites both and the `shots` rows, so the file always shows the version that was actually shot.
 - Generated media is downloaded immediately (vendor URLs are temporary) — each vendor's `_download()` checks `content_type` and size.
 - Before STT the audio track is extracted to a mono 16 kHz WAV (`work/<clip>.stt.wav`) so every STT vendor receives the same input.
 
@@ -109,22 +113,31 @@ For `tts_overlay`: the same template, but `[Audio] no dialogue, no speech; {ambi
 | 1 script | 429/5xx OpenRouter | `RetryableProviderError` → Prefect backoff |
 | 1b preflight | Jev: safety risk > threshold or filmability < threshold | LLM rewrite of the shot prompt with Jev feedback (up to `llm.max_attempts`) → then `ScriptError` |
 | 1b preflight | Jev unavailable | `WARNING`, stage `skipped`, continue without pre-flight |
-| 3 video | 429/5xx/timeout fal | Prefect backoff (`retries.provider`) |
-| 3 video | content policy / 400 | `FatalProviderError` → one retry with a "softened" prompt (LLM rewrite), then fatal |
-| 3 video | clip duration ≠ requested ±1 s | `QualityGateError(DurationGate)` → regenerate the shot |
-| 4 verify | `wer > max_wer` | Jev `Choice` → `failure_kind`; tactic: `paraphrased/extra_words` — regenerate **only this shot** with a stricter prompt and a new seed; `truncated` — widen the line window; `wrong_language` — fall back to `tts_overlay` immediately; `stt_noise` — re-run STT, leave the video alone; `unknown` (Jev disabled) — default: stricter prompt. Limit `audio.native_attempts` → `tts_overlay` fallback for this shot |
-| 4 verify | STT failed | STT retry; if STT is unavailable — `WARNING`, the gate is marked `unverified`, the run is **not** considered successful for R4 |
-| 5 assemble | ffmpeg error | `MediaError` → 1 retry → fatal |
-| 5 assemble | final duration outside 8–30 | `QualityGateError` → trim to 30 s if >30 (never touch the line); if <8 — regenerate the shortest shot with a longer duration |
+| 3 video | 429/5xx/timeout from the vendor | Prefect backoff (`retries.provider`); each retry is counted in `stages.retries` |
+| 3 video | prompt rejected (content policy / 400, or the job fails) | `FatalProviderError` → one LLM rewrite of **that shot only** (`scriptwriter` prompt, `soften` section), then the same attempt is retried; a second rejection is fatal. Statuses 401/402/403/404 are not softened (credentials/billing/endpoint, not the prompt) |
+| 3 video | clip duration ≠ requested ± `quality.shot_duration_tolerance_s` | `DurationGate` in the flow → attempt marked `failed`, shot regenerated (counts against `video.max_attempts` / `audio.native_attempts`); exhausted → `QualityGateError` |
+| 4 verify | `wer > max_wer` | Jev `Choice` → `failure_kind`; tactic: `paraphrased/extra_words/silence` — regenerate **only this shot** with a stricter prompt (vendor picks a new seed); `truncated` — widen the line window by `quality.truncated_window_widen_s` on each side and regenerate with the same prompt (falls back to the strict prompt when the window cannot grow); `wrong_language` — fall back to `tts_overlay` immediately; `stt_noise` — listen again (one STT re-run on the same clip, no video regenerated), then continue as `paraphrased`; `unknown` (Jev disabled) — default: stricter prompt. Limit `audio.native_attempts` → `tts_overlay` fallback for this shot |
+| 4 verify | STT failed | Prefect retry; if STT stays unavailable — `WARNING`, the attempt is marked `unverified`, the shot falls back to `tts_overlay` (the only path that does not need STT) and `report.line_verified` stays `false`: the file exists but R4 is **not evidenced** |
+| 5 assemble | ffmpeg error | `MediaError` → Prefect retry (`retries.provider`) → fatal |
+| 5 assemble | final duration > max | trim to `max` from the end — unless that would cut the line (`protect_until_s` = dialogue shot offset + `dialogue.end_s`), then `QualityGateError` |
+| 5 assemble | final duration < min | regenerate the **shortest** shot once with `duration_s + ceil(deficit) + 1` (capped at 30 s) and assemble again; still short → `QualityGateError` |
 
-Partial regeneration: the regeneration key is `shot_id`; other shots with `done` are untouched (idempotency by `input_hash`).
+Partial regeneration: the regeneration key is `shot_id`; other shots are untouched. Attempt numbers keep growing per shot
+across cycles (`shot_<n>_a<attempt>.mp4`), so no clip or cost row is ever overwritten.
+
+Resume: `hw generate --run-id <existing>` with the same idea reopens the run. `write_script` is skipped when its row is
+`done` with the same `input_hash` (idea + config hash) and `script.json` exists; shots whose `final_attempt_id` clip is on
+disk are reused; the TTS line is reused if its file exists; `assemble`, the final check and the report always run again.
+Nothing is paid twice. A different idea under the same run id is a `ConfigError`.
 
 The audio fallback chain is recorded in the DB: `runs.audio_strategy_used: native | tts_overlay`, `runs.fallback_reason`, and per attempt — `shot_attempts.strategy`.
 
 ## 7. Human-in-the-loop
 
 Deliberately **absent** in the PoC (requirement: "one command → file"). The points where it would exist "for real" are
-already in the flow as no-op hooks with a config flag `hitl.<point>.enabled=false`:
+already in the flow as hooks (`_hitl(ctx, point, ...)`) that only log `hitl.checkpoint`; the config flags
+`hitl.<point>.enabled` exist and setting one to `true` makes the run fail with `ConfigError` **before any paid call**,
+so a review is never silently skipped:
 
 1. **After script** — script approval (the cheapest point; everything before it costs cents).
 2. **After verify_speech when `unverified`** — a human confirms verbatim-ness when STT is unavailable.

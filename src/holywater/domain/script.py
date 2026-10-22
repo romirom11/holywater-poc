@@ -126,3 +126,24 @@ class Script(BaseModel):
     def with_dialogue_text(self, text: str) -> Script:
         """Return a copy whose line is replaced by the verbatim original (ADR-005)."""
         return self.model_copy(update={"dialogue": self.dialogue.model_copy(update={"text": text})})
+
+    def with_dialogue_window(self, start_s: float, end_s: float) -> Script:
+        """Re-validated copy with a new line window (the `truncated` retry tactic)."""
+        updated = self.model_copy(
+            update={
+                "dialogue": self.dialogue.model_copy(update={"start_s": start_s, "end_s": end_s})
+            }
+        )
+        return Script.model_validate(updated.model_dump())
+
+    def with_shot(self, shot: Shot) -> Script:
+        """Re-validated copy with one shot replaced by id (prompt softening, duration change)."""
+        shots = [shot if s.id == shot.id else s for s in self.shots]
+        if shot.id not in {s.id for s in self.shots}:
+            msg = f"script has no shot {shot.id}"
+            raise ValueError(msg)
+        return Script.model_validate(self.model_copy(update={"shots": shots}).model_dump())
+
+    def with_shot_duration(self, shot_id: int, duration_s: int) -> Script:
+        shot = next(s for s in self.shots if s.id == shot_id)
+        return self.with_shot(shot.model_copy(update={"duration_s": duration_s}))

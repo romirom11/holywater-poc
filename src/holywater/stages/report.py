@@ -88,6 +88,13 @@ def build_report(
     ]
     prompt_versions = sorted({a.prompt_version for a in attempts})
     breakdown = repo.cost_breakdown(run_id)
+    # The decisive verification is the latest one on the dialogue shot's accepted attempt: for
+    # native speech that is the clip's gate, for tts_overlay the sanity check on the final.
+    line_verified = any(
+        (v := by_attempt.get(a.id)) is not None and v.verified and v.passed
+        for a in finals.values()
+        if a.id is not None
+    )
     report = RunReport(
         run_id=run.id,
         tag=run.tag,
@@ -115,6 +122,7 @@ def build_report(
         latency_s=((run.finished_at - run.started_at).total_seconds() if run.finished_at else None),
         stages=stage_metrics,
         shots=shots,
+        line_verified=line_verified,
         shots_regenerated=sum(max(0, s.attempts - 1) for s in shots),
         retries_total=sum(s.retries for s in stages),
         judge_decisions=len(repo.get_judge_decisions(run_id)),

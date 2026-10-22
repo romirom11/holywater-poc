@@ -81,3 +81,12 @@ def test_secrets_are_not_printed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "super-secret" not in repr(secrets)
     assert secrets.fal_key is not None
     assert secrets.fal_key.get_secret_value() == "super-secret"
+
+
+def test_quality_tactic_knobs_have_defaults_and_bounds() -> None:
+    from holywater.config.schema import QualityConfig
+
+    q = QualityConfig()
+    assert (q.shot_duration_tolerance_s, q.truncated_window_widen_s) == (1.0, 1.0)
+    with pytest.raises(ValueError):
+        QualityConfig(shot_duration_tolerance_s=-1)

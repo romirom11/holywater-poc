@@ -50,4 +50,5 @@ def test_render_stats_table() -> None:
         ]
     )
     assert "success_rate" in table and "67%" in table and "-" in table
+    assert "line_verified_rate" in table
     assert table.splitlines()[0].split() == ["metric", "v1", "v2"]

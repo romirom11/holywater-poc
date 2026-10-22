@@ -95,7 +95,8 @@ paid runs or eval suites on your own initiative — ask first.
 | Switch vendor or model for a capability | `config/pipeline.yaml` (`provider:` + `model:`) |
 | Add a vendor | `providers/<vendor>.py` + `providers/registry.py` (`VENDORS`, `_build`) |
 | Check a request against the vendor API | `docs/PROVIDERS_API.md` (schemas from `openapi.json`, not tutorials) |
-| Change retry/fallback logic | `flows/generate_video_flow.py` (`_produce_shot`) |
+| Change retry/fallback logic | `flows/generate_video_flow.py` (`_produce_shot`, `_stage_assemble`, `_verify_final`); tactic table in `docs/DATA_FLOW.md` §6 |
+| Tune a gate or tactic threshold | `config/pipeline.yaml` → `quality.*` (`max_wer`, `shot_duration_tolerance_s`, `truncated_window_widen_s`) |
 | Change what counts as "verbatim" | `quality/text_norm.py` + tests in `tests/unit/test_text_norm.py` |
 | Change the video prompt | `src/holywater/prompts/seedance_shot.md` (bump version) |
 | Change the script schema | `domain/script.py` (+ invariants) and `prompts/scriptwriter.md` |

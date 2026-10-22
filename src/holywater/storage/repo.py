@@ -43,6 +43,7 @@ class TagStats:
     fallback_rate: float
     mean_duration_s: float | None
     mean_cost_by_provider: dict[str, float] = field(default_factory=dict)
+    line_verified_rate: float = 0.0  # runs whose final line audio passed the STT/WER gate
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,20 @@ class RunRepository:
     def get_run(self, run_id: str) -> Run | None:
         with self._session() as s:
             return s.get(Run, run_id)
+
+    def reopen_run(self, run_id: str, *, config_hash: str, git_sha: str | None) -> Run:
+        """Resume: mark an existing run as running again; costs and accepted attempts are kept."""
+        with self._session() as s:
+            run = self._require_run(s, run_id)
+            run.status = RunStatus.RUNNING.value
+            run.finished_at = None
+            run.error_type = None
+            run.error_json = None
+            run.config_hash = config_hash
+            run.git_sha = git_sha
+            s.add(run)
+            s.commit()
+            return run
 
     def set_audio_strategy_used(
         self, run_id: str, strategy: AudioStrategy, *, fallback_reason: str | None = None
@@ -170,6 +185,22 @@ class RunRepository:
             stage.finished_at = _now()
             if error is not None:
                 stage.error_type, stage.error_json = _serialize_error(error)
+            s.add(stage)
+            s.commit()
+            return stage
+
+    def skip_stage(self, run_id: str, name: StageName) -> Stage:
+        """Record that a stage was not needed (e.g. TTS under the native strategy).
+
+        Unlike `start_stage` this does not count as an entry, so a later real run of the stage
+        (after a fallback) is still entry #1.
+        """
+        with self._session() as s:
+            stage = self._get_stage(s, run_id, name)
+            if stage is None:
+                stage = Stage(run_id=run_id, name=name.value, status=StageStatus.SKIPPED.value)
+            stage.status = StageStatus.SKIPPED.value
+            stage.finished_at = _now()
             s.add(stage)
             s.commit()
             return stage
@@ -409,7 +440,7 @@ class RunRepository:
     def tag_stats(self, tag: str) -> TagStats:
         runs = self.list_runs(tag=tag, limit=10_000)
         if not runs:
-            return TagStats(tag, 0, 0.0, 0.0, None, None, 0.0, None)
+            return TagStats(tag, 0, 0.0, 0.0, None, None, 0.0, None, {}, 0.0)
         done = [r for r in runs if r.status == RunStatus.DONE.value]
         fallbacks = [
             r
@@ -419,6 +450,7 @@ class RunRepository:
         wers: list[float] = []
         durations: list[float] = []
         by_provider: dict[str, float] = {}
+        verified_runs = 0
         with self._session() as s:
             for run in runs:
                 for provider, amount in self.cost_breakdown(run.id).by_provider.items():
@@ -435,6 +467,8 @@ class RunRepository:
                     ).first()
                     if v is not None and v.verified:
                         wers.append(v.wer)
+                        if v.passed and run.status == RunStatus.DONE.value:
+                            verified_runs += 1
         return TagStats(
             tag=tag,
             runs=len(runs),
@@ -445,6 +479,7 @@ class RunRepository:
             fallback_rate=len(fallbacks) / len(runs),
             mean_duration_s=statistics.fmean(durations) if durations else None,
             mean_cost_by_provider={k: v / len(runs) for k, v in sorted(by_provider.items())},
+            line_verified_rate=verified_runs / len(runs),
         )
 
     # -- helpers -------------------------------------------------------------------------------

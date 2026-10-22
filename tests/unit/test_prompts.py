@@ -6,7 +6,7 @@ from holywater.prompts import load_prompt
 
 def test_scriptwriter_prompt_loads_and_renders() -> None:
     prompt = load_prompt("scriptwriter")
-    assert prompt.version_tag == "scriptwriter@1"
+    assert prompt.version_tag == "scriptwriter@2"
     system = prompt.render("system")
     assert "VERBATIM" in system
     user = prompt.render("user", idea_text="An idea.", feedback_block="")

@@ -1,5 +1,5 @@
 ---
-version: 1
+version: 2
 ---
 
 ## system
@@ -30,3 +30,12 @@ $idea_text
 </idea>
 
 $feedback_block
+
+## soften
+
+The video model rejected the prompt of shot $shot_id with: "$reason".
+Rewrite ONLY shot $shot_id so its visual_prompt, camera and continuity are clearly safe and neutral
+(no violence, weapons, injuries, nudity, real people, brands or text on screen) while keeping the
+same story beat. Keep every other field of your previous answer identical, including the line.
+Your previous answer:
+$previous

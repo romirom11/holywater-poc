@@ -48,6 +48,8 @@ quality:
   max_wer: 0.10
   duration_s: {min: 8, max: 30}
   shots: {min: 1, max: 2}
+  shot_duration_tolerance_s: 1.0               # clip length vs requested; outside -> regenerate the shot
+  truncated_window_widen_s: 1.0                # `truncated` failure: widen the line window by this on each side
 
 retries:
   provider: {attempts: 3, backoff_s: [5, 15, 45]}

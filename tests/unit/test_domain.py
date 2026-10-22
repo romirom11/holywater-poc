@@ -143,3 +143,15 @@ def test_idea_input_strips_and_validates() -> None:
     assert idea.text.startswith("A taxi")
     with pytest.raises(ValidationError):
         IdeaInput(text="   short   ")
+
+
+def test_script_window_and_shot_helpers_revalidate() -> None:
+    script = Script.model_validate(make_script())
+    wider = script.with_dialogue_window(1.0, 7.0)
+    assert (wider.dialogue.start_s, wider.dialogue.end_s) == (1.0, 7.0)
+    longer = script.with_shot_duration(1, 9)
+    assert longer.shots[0].duration_s == 9 and longer.shots[1] == script.shots[1]
+    with pytest.raises(ValueError, match="dialogue ends"):
+        script.with_dialogue_window(2.0, 9.0)  # beyond the 8 s dialogue shot
+    with pytest.raises(ValueError, match="total duration"):
+        script.with_shot_duration(2, 30)  # 6 + 30 > 30

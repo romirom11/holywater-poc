@@ -73,6 +73,7 @@ WER threshold, retries, timeouts.
 uv run hw eval run --tag v0.1 [--dry-run]      # runs evals/cases.yaml under a tag
 uv run hw eval compare v0.1 v0.2               # success rate, fallback rate, WER, cost per tag
 uv run hw inspect <run_id>                     # prints report.json
+uv run hw generate '<same idea>' --run-id <id>  # resume a failed run: done stages / accepted shots are reused
 uv run hw costs <run_id>                       # spend by provider, model, stage and shot attempt
 ```
 

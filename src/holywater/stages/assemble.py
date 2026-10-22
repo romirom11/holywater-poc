@@ -10,6 +10,7 @@ from holywater.domain.artifacts import AudioArtifact, FinalVideo, VideoArtifact
 from holywater.domain.enums import AudioStrategy, Resolution
 from holywater.media import FFmpeg
 from holywater.media.ffmpeg import VERTICAL_SIZES
+from holywater.observability.errors import QualityGateError
 from holywater.observability.logging import get_logger
 from holywater.providers.base import LipsyncProvider, LipsyncRequest
 from holywater.quality.gates import DurationGate, MediaIntegrityGate
@@ -42,7 +43,9 @@ def assemble(
     dest: Path,
     strategy_used: AudioStrategy,
     voice: VoiceOverlay | None = None,
+    protect_until_s: float | None = None,
 ) -> FinalVideo:
+    """`protect_until_s`: where the line ends on the final timeline; trimming never cuts it."""
     if not shots:
         msg = "assemble needs at least one shot"
         raise ValueError(msg)
@@ -67,6 +70,18 @@ def assemble(
     final_info = deps.ffmpeg.loudnorm(joined, dest)
     max_s = deps.quality.duration_s.max
     if final_info.duration_s > max_s + 0.5:
+        if protect_until_s is not None and protect_until_s > max_s:
+            msg = (
+                f"final is {final_info.duration_s:.1f}s and the line ends at {protect_until_s:.1f}s"
+            )
+            raise QualityGateError(
+                msg + f"; trimming to {max_s}s would cut it",
+                gate="duration",
+                measured=round(final_info.duration_s, 3),
+                threshold=f"{deps.quality.duration_s.min}..{max_s}",
+                stage="assemble",
+                context={"protect_until_s": protect_until_s},
+            )
         log.warning("assemble.trimming", duration_s=final_info.duration_s, max_s=max_s)
         trimmed = work_dir / "trimmed.mp4"
         deps.ffmpeg.trim(dest, trimmed, max_s=max_s)

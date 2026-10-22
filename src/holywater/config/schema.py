@@ -98,6 +98,10 @@ class QualityConfig(_Strict):
     max_wer: float = Field(default=0.10, ge=0, le=1)
     duration_s: RangeConfig = RangeConfig(min=8, max=30)
     shots: RangeConfig = RangeConfig(min=1, max=2)
+    # Per-clip DurationGate: |clip - requested| must be within this, else the shot is regenerated.
+    shot_duration_tolerance_s: float = Field(default=1.0, ge=0)
+    # `truncated` tactic: how much the dialogue window grows on each side before regenerating.
+    truncated_window_widen_s: float = Field(default=1.0, ge=0)
 
 
 class ProviderRetryConfig(_Strict):

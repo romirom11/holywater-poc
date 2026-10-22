@@ -139,7 +139,7 @@ It is TypeSafe AI — not Typeframes.
 2. **WER-gate failure classification** — when the transcript ≠ the line, we must pick a retry tactic:
    `Choice{paraphrased, truncated, extra_words, wrong_language, stt_noise, silence}` → `paraphrased/extra_words` →
    retry with a stricter prompt; `truncated` → widen the line window; `wrong_language` → fall back to TTS immediately;
-   `stt_noise` → re-run STT with another model, don't burn video.
+   `stt_noise` → re-run STT once on the same clip (same model; swapping models is a later step), don't burn video.
 
 **What Jev does NOT do here:** it does not check verbatim-ness (that's WER in code — deterministic and exact), does not judge the picture
 (text-only), does not write prompts.

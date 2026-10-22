@@ -81,6 +81,7 @@ def render_stats(stats: list[TagStats]) -> str:
     rows: list[tuple[str, Callable[[TagStats], str]]] = [
         ("runs", lambda s: str(s.runs)),
         ("success_rate", lambda s: _pct(s.success_rate)),
+        ("line_verified_rate", lambda s: _pct(s.line_verified_rate)),
         ("fallback_rate", lambda s: _pct(s.fallback_rate)),
         ("mean_wer", lambda s: _num(s.mean_wer, 3)),
         ("p95_wer", lambda s: _num(s.p95_wer, 3)),

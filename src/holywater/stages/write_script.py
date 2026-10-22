@@ -93,6 +93,43 @@ def write_script(
     raise ScriptError(msg, stage="write_script", context={"last_feedback": pending})
 
 
+def soften_shot(
+    script: Script, shot_id: int, *, reason: str, idea: IdeaInput, deps: ScriptWriterDeps
+) -> ScriptResult:
+    """One LLM rewrite of a shot the video model rejected (content policy / bad input).
+
+    Only that shot is taken from the new answer; the rest of the script — including the verbatim
+    line — is kept, and the merged script is re-validated.
+    """
+    feedback = deps.prompt.render(
+        "soften",
+        shot_id=shot_id,
+        reason=reason.replace('"', "'")[:300],
+        previous=script.model_dump_json(indent=2),
+    )
+    log.warning("write_script.soften", shot_id=shot_id, reason=reason[:300])
+    result = write_script(idea, deps, feedback=[feedback])
+    new_shot = next((s for s in result.script.shots if s.id == shot_id), None)
+    if new_shot is None:
+        msg = f"softened script has no shot {shot_id}"
+        raise ScriptError(msg, stage="write_script", context={"shot_id": shot_id})
+    try:
+        merged = script.with_shot(new_shot)
+    except ValueError as exc:
+        msg = f"softened shot {shot_id} breaks the script invariants: {exc}"
+        raise ScriptError(msg, stage="write_script", context={"shot_id": shot_id}) from exc
+    return ScriptResult(
+        script=merged,
+        attempts=result.attempts,
+        model=result.model,
+        prompt_version=result.prompt_version,
+        cost_usd=result.cost_usd,
+        cost_is_estimate=result.cost_is_estimate,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+
+
 def _feedback_block(feedback: list[str]) -> str:
     if not feedback:
         return ""

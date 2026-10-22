@@ -57,10 +57,16 @@ def verify_speech(
     language: str,
     deps: VerifyDeps,
     work_dir: Path | None = None,
+    window: tuple[float, float] | None = None,
 ) -> VerifyResult:
-    """Transcribe and compare. Provider errors propagate (the flow decides on retries)."""
+    """Transcribe and compare. Provider errors propagate (the flow decides on retries).
+
+    `window=(start_s, duration_s)` transcribes only that segment — used on the assembled final,
+    where other shots carry ambient sound that would otherwise pollute the transcript.
+    """
     wav = (work_dir or media_path.parent) / f"{media_path.stem}.stt.wav"
-    deps.ffmpeg.extract_audio(media_path, wav)
+    start_s, duration_s = window if window else (None, None)
+    deps.ffmpeg.extract_audio(media_path, wav, start_s=start_s, duration_s=duration_s)
     stt_language = language if deps.stt_config.language == "auto" else deps.stt_config.language
     stt = deps.stt.transcribe(
         STTRequest(

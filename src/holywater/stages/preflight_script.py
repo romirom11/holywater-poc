@@ -91,6 +91,9 @@ def preflight_script(script: Script, deps: PreflightDeps) -> PreflightResult:
             "lengthen the shot"
         )
 
+    if not any(d.available for d in decisions):
+        log.warning("preflight.unavailable", reason="judge answered nothing; continuing without it")
+        return PreflightResult(ok=True, skipped=True, decisions=decisions)
     log.info("preflight.done", issues=len(issues), decisions=len(decisions))
     return PreflightResult(ok=not issues, skipped=False, issues=issues, decisions=decisions)
 
