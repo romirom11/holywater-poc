@@ -82,6 +82,32 @@ def test_stage_lifecycle_and_idempotency(repo: RunRepository) -> None:
     assert not repo.stage_is_done(run_id, StageName.WRITE_SCRIPT, input_hash="h1")
 
 
+def test_stage_retries_are_counted_separately_from_entries(repo: RunRepository) -> None:
+    run_id = _new_run(repo)
+    with pytest.raises(LookupError, match="not started"):
+        repo.record_stage_retry(run_id, StageName.GENERATE_VIDEO)
+    repo.start_stage(run_id, StageName.GENERATE_VIDEO)  # shot 1
+    assert repo.record_stage_retry(run_id, StageName.GENERATE_VIDEO) == 1
+    repo.finish_stage(run_id, StageName.GENERATE_VIDEO, StageStatus.DONE)
+    stage = repo.start_stage(run_id, StageName.GENERATE_VIDEO)  # shot 2: re-entry, not a retry
+    assert (stage.attempt, stage.retries) == (2, 1)
+
+
+def test_init_db_adds_columns_missing_from_an_older_file(tmp_path: Path) -> None:
+    from sqlalchemy import inspect, text
+
+    db = tmp_path / "old.db"
+    engine = make_engine(db)
+    init_db(engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE stages DROP COLUMN retries"))
+    assert "retries" not in {c["name"] for c in inspect(engine).get_columns("stages")}
+    init_db(make_engine(db))
+    repo = RunRepository(make_engine(db))
+    run_id = _new_run(repo)
+    assert repo.start_stage(run_id, StageName.WRITE_SCRIPT).retries == 0
+
+
 def test_stage_failure_persists_typed_error(repo: RunRepository) -> None:
     run_id = _new_run(repo)
     repo.start_stage(run_id, StageName.VERIFY_SPEECH)

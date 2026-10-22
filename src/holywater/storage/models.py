@@ -41,7 +41,8 @@ class Stage(SQLModel, table=True):
     run_id: str = Field(foreign_key="runs.id", index=True)
     name: str
     status: str
-    attempt: int = 0
+    attempt: int = 0  # how many times the flow entered the stage (per shot for shot stages)
+    retries: int = 0  # Prefect task retries on typed retryable errors inside the stage
     input_hash: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None

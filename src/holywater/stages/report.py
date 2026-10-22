@@ -35,7 +35,9 @@ def build_report(
     if run is None:
         msg = f"run {run_id} not found"
         raise LookupError(msg)
-    stages = repo.get_stages(run_id)
+    # The report cannot observe its own completion, so its stage row (always `running` at this
+    # point) stays out of the export; `hw inspect` reads the final status from the DB.
+    stages = [s for s in repo.get_stages(run_id) if s.name != StageName.REPORT.value]
     attempts = repo.get_attempts(run_id)
     verifications = repo.get_speech_verifications(run_id)
     finals = {a.shot_id: a for a in repo.get_final_attempts(run_id)}
@@ -73,7 +75,8 @@ def build_report(
         StageMetrics(
             name=s.name,
             status=s.status,
-            attempts=s.attempt,
+            entries=s.attempt,
+            retries=s.retries,
             duration_s=(
                 (s.finished_at - s.started_at).total_seconds()
                 if s.started_at and s.finished_at
@@ -113,7 +116,7 @@ def build_report(
         stages=stage_metrics,
         shots=shots,
         shots_regenerated=sum(max(0, s.attempts - 1) for s in shots),
-        retries_total=sum(max(0, s.attempt - 1) for s in stages),
+        retries_total=sum(s.retries for s in stages),
         judge_decisions=len(repo.get_judge_decisions(run_id)),
         preflight_rewrites=preflight_rewrites,
         costs=[

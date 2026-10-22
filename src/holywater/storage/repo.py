@@ -174,6 +174,18 @@ class RunRepository:
             s.commit()
             return stage
 
+    def record_stage_retry(self, run_id: str, name: StageName) -> int:
+        """Count one provider-level retry (a Prefect task retry) against the stage it ran in."""
+        with self._session() as s:
+            stage = self._get_stage(s, run_id, name)
+            if stage is None:
+                msg = f"stage {name.value} of run {run_id} not started"
+                raise LookupError(msg)
+            stage.retries += 1
+            s.add(stage)
+            s.commit()
+            return stage.retries
+
     def stage_is_done(self, run_id: str, name: StageName, *, input_hash: str | None) -> bool:
         """Idempotency check: the stage finished and its inputs have not changed."""
         with self._session() as s:

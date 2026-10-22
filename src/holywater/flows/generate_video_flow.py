@@ -7,6 +7,7 @@ quality-gate decisions — regenerate a shot, switch audio strategy, stop — li
 from __future__ import annotations
 
 import hashlib
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -35,16 +36,31 @@ from holywater.storage import RunPaths, RunRepository
 
 log = get_logger(__name__)
 
+# The stage currently open in this run, so a task retry can be charged to it. Set by `_stage`;
+# Prefect runs sync tasks in the flow's context, so the retry predicate below sees the same value.
+_active_stage: ContextVar[tuple[RunContext, StageName] | None] = ContextVar(
+    "holywater_active_stage", default=None
+)
+
 
 # -- tasks (one per stage; retries only on typed retryable errors) ----------------------------
 
 
 def _retry_on_typed_error(_task: Any, _task_run: Any, state: Any) -> bool:
+    """Prefect consults this only while retries remain, so a `True` here is one real retry."""
     try:
         state.result()
     except BaseException as exc:
         retry = is_retryable(exc)
-        log.warning("task.retry_decision", error=type(exc).__name__, retry=retry)
+        active = _active_stage.get()
+        retries = (
+            active[0].repo.record_stage_retry(active[0].run_id, active[1])
+            if retry and active is not None
+            else None
+        )
+        log.warning(
+            "task.retry_decision", error=type(exc).__name__, retry=retry, stage_retries=retries
+        )
         return retry
     return False
 
@@ -541,13 +557,17 @@ class _stage:  # noqa: N801 - context manager used like a function
     def __init__(self, ctx: RunContext, name: StageName, *, input_hash: str | None = None) -> None:
         self.ctx, self.name, self.input_hash = ctx, name, input_hash
         self._log_ctx = log_context(stage=name.value)
+        self._token: Token[tuple[RunContext, StageName] | None] | None = None
 
     def __enter__(self) -> None:
         self.ctx.repo.start_stage(self.ctx.run_id, self.name, input_hash=self.input_hash)
+        self._token = _active_stage.set((self.ctx, self.name))
         self._log_ctx.__enter__()
         log.info("stage.start")
 
     def __exit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> None:
+        if self._token is not None:
+            _active_stage.reset(self._token)
         if exc is None:
             current = next(
                 (s for s in self.ctx.repo.get_stages(self.ctx.run_id) if s.name == self.name.value),

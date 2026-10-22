@@ -6,7 +6,7 @@
 |--------|--------|-----|
 | `success` (bool) + `failure_stage/type` | `runs`, `stages` | success rate, where it breaks |
 | `latency_s` total and per stage | structlog timings | where the bottleneck is |
-| `attempts` per stage, `retries_total` | `stages` | provider stability |
+| `retries` per stage, `retries_total` | `stages.retries` (Prefect task retries on transient provider errors; stage `entries` is how often the flow entered the stage and is not a retry count) | provider stability |
 | `cost_usd` total, `cost_summary.{by_provider,by_model,by_stage,by_cycle}`, `actual_usd` vs `estimated_usd` | `costs` table: one row per provider call with `shot_id`/`attempt`; OpenRouter reports real `usage.cost` for LLM/video/STT, fal and TTS are price-table estimates | budget per video, per retry cycle, per vendor; `hw costs <run_id>` |
 | `audio.strategy_used`, `fallback_reason` | `runs` | how often native fails R4 |
 | `wer` (per shot and final) | SpeechGate | the main R4 gate |

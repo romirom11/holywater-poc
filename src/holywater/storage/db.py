@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine, event, inspect, text
 from sqlmodel import SQLModel, create_engine
 
 from holywater.storage import models as _models  # noqa: F401 - registers tables on the metadata
@@ -29,4 +29,29 @@ def make_engine(db_path: Path | str) -> Engine:
 
 
 def init_db(engine: Engine) -> None:
+    """Create missing tables, then add columns that newer models declare but an older DB lacks."""
     SQLModel.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Forward-only, additive migration: `ALTER TABLE ... ADD COLUMN` with the model's default.
+
+    Enough for a PoC whose schema only grows; anything destructive needs a real migration tool.
+    """
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.tables.values():  # order is irrelevant for ADD COLUMN
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                ddl = column.type.compile(dialect=engine.dialect)
+                default = getattr(column.default, "arg", None)
+                clause = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {ddl}"
+                if default is not None and not callable(default):
+                    clause += f" DEFAULT {default!r}"
+                elif not column.nullable:
+                    msg = f"cannot add NOT NULL column {table.name}.{column.name} without default"
+                    raise RuntimeError(msg)
+                conn.execute(text(clause))

@@ -12,8 +12,9 @@ class StageMetrics(BaseModel):
 
     name: str
     status: str
-    attempts: int
-    duration_s: float | None = None
+    entries: int  # times the flow entered the stage (per shot / per shot attempt for shot stages)
+    retries: int = 0  # Prefect task retries on transient provider errors inside the stage
+    duration_s: float | None = None  # of the last entry
     error_type: str | None = None
 
 
@@ -100,8 +101,8 @@ class RunReport(BaseModel):
     latency_s: float | None
     stages: list[StageMetrics] = Field(default_factory=list)
     shots: list[ShotMetrics] = Field(default_factory=list)
-    shots_regenerated: int = 0
-    retries_total: int = 0
+    shots_regenerated: int = 0  # extra generation cycles after a failed quality gate
+    retries_total: int = 0  # sum of stage retries: transient provider failures that were retried
     judge_decisions: int = 0
     preflight_rewrites: int = 0
     costs: list[CostLine] = Field(default_factory=list)

@@ -52,6 +52,11 @@ def test_happy_path_native(config: PipelineConfig) -> None:
     assert [s["name"] for s in report["stages"]][:2] == ["write_script", "preflight_script"]
     assert report["judge_decisions"] == 5
     assert report["shots_regenerated"] == 0
+    assert report["retries_total"] == 0
+    by_name = {s["name"]: s for s in report["stages"]}
+    assert "report" not in by_name  # cannot observe its own completion; see DB for its status
+    assert all(s["status"] in {"done", "skipped"} for s in by_name.values())
+    assert by_name["generate_video"]["entries"] == 2  # one entry per shot, not a retry
 
     run_dir = config.storage.runs_dir / run_id
     assert (run_dir / "script.json").is_file()
@@ -103,6 +108,10 @@ def test_transient_provider_error_is_retried(config: PipelineConfig) -> None:
     report = json.loads(outcome.report_path.read_text())
     assert report["success"] is True
     assert report["shots_regenerated"] == 0
+    assert report["retries_total"] == 2
+    by_name = {s["name"]: s for s in report["stages"]}
+    assert (by_name["generate_video"]["retries"], by_name["generate_video"]["entries"]) == (2, 2)
+    assert by_name["write_script"]["retries"] == 0
 
 
 def test_stt_outage_marks_unverified_and_falls_back(config: PipelineConfig) -> None:
