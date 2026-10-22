@@ -12,7 +12,6 @@ import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
 
 from pydantic import BaseModel
 
@@ -23,8 +22,10 @@ from holywater.media.ffmpeg import VERTICAL_SIZES
 from holywater.observability.errors import RetryableProviderError
 from holywater.providers.base import (
     JudgeAnswer,
+    LipsyncRequest,
     LipsyncResult,
     LLMResult,
+    STTRequest,
     STTResult,
     TTSRequest,
     TTSResult,
@@ -32,8 +33,6 @@ from holywater.providers.base import (
     VideoResult,
 )
 from holywater.quality.text_norm import extract_quoted
-
-T = TypeVar("T", bound=BaseModel)
 
 SPEECH_SIDECAR_SUFFIX = ".speech.txt"
 _YES_THRESHOLD = 0.5
@@ -49,13 +48,18 @@ _QUOTED_IN_PROMPT = re.compile(r'says "([^"]+)"')
 class FakeLLM:
     """Builds a plausible two-shot script from the idea. `line_override` simulates paraphrasing."""
 
-    model: str = "fake/llm"
     line_override: str | None = None
     override_times: int = 0
     calls: int = 0
 
-    def complete_structured(
-        self, *, system: str, user: str, schema: type[T], temperature: float | None = None
+    def complete_structured[T: BaseModel](
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        schema: type[T],
+        temperature: float | None = None,
     ) -> LLMResult[T]:
         self.calls += 1
         idea_text = _extract_idea(user)
@@ -98,7 +102,7 @@ class FakeLLM:
                 "end_s": min(7.5, 1.0 + max(1.5, len(line) / CHARS_PER_SECOND + 0.5)),
             },
         }
-        return LLMResult(data=schema.model_validate(payload), model=self.model)
+        return LLMResult(data=schema.model_validate(payload), model=f"fake/{model}")
 
 
 def _extract_idea(user_prompt: str) -> str:
@@ -122,7 +126,6 @@ class FakeVideo:
     """Synthesizes a test-pattern clip with ffmpeg and records the "spoken" line in a sidecar."""
 
     ffmpeg: FFmpeg = field(default_factory=FFmpeg)
-    model: str = "fake/video"
     fail_times: int = 0
     speech_mutator: Callable[[str, int], str] | None = None
     duration_offset_s: float = 0.0
@@ -132,7 +135,7 @@ class FakeVideo:
         self.calls += 1
         if self.calls <= self.fail_times:
             msg = f"simulated transient failure #{self.calls}"
-            raise RetryableProviderError(msg, provider="fake", model=self.model, status_code=503)
+            raise RetryableProviderError(msg, provider="fake", model=request.model, status_code=503)
         width, height = VERTICAL_SIZES[request.resolution.value]
         spoken = _line_from_prompt(request.prompt)
         if spoken and self.speech_mutator is not None:
@@ -145,14 +148,12 @@ class FakeVideo:
             height=height,
             with_audio=request.generate_audio,
         )
-        sidecar = dest.with_name(dest.name + SPEECH_SIDECAR_SUFFIX)
-        sidecar.write_text(spoken or "", encoding="utf-8")
+        write_sidecar(dest, spoken or "")
         return VideoResult(
             path=dest,
-            model=self.model,
+            model=f"fake/{request.model}",
             seed=request.seed if request.seed is not None else 1000 + self.calls,
             request_id=f"fake-video-{self.calls}",
-            cost_usd=0.0,
         )
 
 
@@ -161,13 +162,23 @@ def _line_from_prompt(prompt: str) -> str | None:
     return match.group(1) if match else None
 
 
+def write_sidecar(media: Path, text: str) -> Path:
+    sidecar = media.with_name(media.name + SPEECH_SIDECAR_SUFFIX)
+    sidecar.write_text(text, encoding="utf-8")
+    return sidecar
+
+
+def read_sidecar(media: Path) -> str | None:
+    sidecar = media.with_name(media.name + SPEECH_SIDECAR_SUFFIX)
+    return sidecar.read_text(encoding="utf-8") if sidecar.is_file() else None
+
+
 # -- TTS / STT / lipsync ----------------------------------------------------------------------
 
 
 @dataclass
 class FakeTTS:
     ffmpeg: FFmpeg = field(default_factory=FFmpeg)
-    model: str = "fake/tts"
     calls: int = 0
 
     def synthesize(self, request: TTSRequest, *, dest: Path) -> TTSResult:
@@ -175,40 +186,42 @@ class FakeTTS:
         dest.parent.mkdir(parents=True, exist_ok=True)
         duration = max(0.5, len(request.text) / CHARS_PER_SECOND)
         self.ffmpeg.synth_audio(dest, duration_s=duration)
-        sidecar = dest.with_name(dest.name + SPEECH_SIDECAR_SUFFIX)
-        sidecar.write_text(request.text, encoding="utf-8")
-        return TTSResult(path=dest, model=self.model)
+        write_sidecar(dest, request.text)
+        return TTSResult(path=dest, model=f"fake/{request.model}")
 
 
 @dataclass
 class FakeSTT:
     """Returns the sidecar text written by `FakeVideo`/`FakeTTS`, or a queued transcript."""
 
-    model: str = "fake/stt"
     queue: list[str] = field(default_factory=list)
     fail_times: int = 0
     calls: int = 0
 
-    def transcribe(self, audio_or_video: Path, *, language: str | None = None) -> STTResult:
+    def transcribe(self, request: STTRequest) -> STTResult:
         self.calls += 1
+        model = f"fake/{request.model}"
         if self.calls <= self.fail_times:
-            raise RetryableProviderError("simulated STT outage", provider="fake", model=self.model)
+            raise RetryableProviderError("simulated STT outage", provider="fake", model=model)
         if self.queue:
-            return STTResult(text=self.queue.pop(0), model=self.model, language=language)
-        sidecar = audio_or_video.with_name(audio_or_video.name + SPEECH_SIDECAR_SUFFIX)
-        text = sidecar.read_text(encoding="utf-8") if sidecar.is_file() else ""
-        return STTResult(text=text, model=self.model, language=language)
+            return STTResult(text=self.queue.pop(0), model=model, language=request.language)
+        text = None
+        for candidate in (request.source_path, request.audio_path):
+            if candidate is not None:
+                text = read_sidecar(candidate)
+                if text is not None:
+                    break
+        return STTResult(text=text or "", model=model, language=request.language)
 
 
 @dataclass
 class FakeLipsync:
-    model: str = "fake/lipsync"
     calls: int = 0
 
-    def sync(self, video: Path, audio: Path, *, dest: Path) -> LipsyncResult:
+    def sync(self, request: LipsyncRequest, *, dest: Path) -> LipsyncResult:
         self.calls += 1
-        shutil.copyfile(video, dest)
-        return LipsyncResult(path=dest, model=self.model)
+        shutil.copyfile(request.video_path, dest)
+        return LipsyncResult(path=dest, model=f"fake/{request.model}")
 
 
 # -- Judge ------------------------------------------------------------------------------------

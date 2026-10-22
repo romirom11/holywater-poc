@@ -50,6 +50,7 @@ def write_script(
         log.info("write_script.attempt", attempt=attempt, feedback=len(pending))
         try:
             result = deps.llm.complete_structured(
+                model=deps.config.model,
                 system=deps.prompt.render("system"),
                 user=user,
                 schema=Script,

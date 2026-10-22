@@ -27,7 +27,7 @@ uv run hw generate "Night, rain, a taxi driver looks in the mirror and says: \"A
 ## 3. Non-functional requirements (ours)
 
 - **Clean, modular code**: layers `domain / providers / stages / flows / media / quality / observability / storage`; every provider behind a Protocol; swapping a model = a config change.
-- **DRY**: one way to call fal (`providers/fal_base.py`), one way to call an LLM with structured output, one ffmpeg wrapper.
+- **DRY**: one client, one error map per vendor (`providers/fal.py`, `providers/openrouter.py`); one ffmpeg wrapper; capabilities resolved by `providers/registry.py` from config.
 - **Configurable**: all models, generation parameters, quality thresholds and retry policies live in `config/pipeline.yaml`. Secrets only in `.env`.
 - **Observable**: no error or warning is ever lost — everything goes to the per-run JSONL log and to the DB (`stages.error_json`).
 - **Idempotent**: re-running with the same `run_id` skips stages whose artifacts are already valid (by `input_hash` in the DB).
@@ -49,6 +49,7 @@ uv run hw generate "Night, rain, a taxi driver looks in the mirror and says: \"A
 | Schemas / validation | pydantic v2, pydantic-settings | LLM structured output, config, artifacts |
 | Orchestration | Prefect 3.x | retries, state, logs and UI out of the box; minimal boilerplate for a PoC |
 | LLM | OpenRouter (OpenAI-compatible API, `response_format: json_schema`) | one entry point to any model, easy to swap in config |
+| Provider switch | `provider:` per capability (`fal` \| `openrouter`), ADR-008 | OpenRouter alone covers LLM+video+TTS+STT with one key; fal adds lipsync |
 | Video | fal.ai `bytedance/seedance-2.5/text-to-video` | 4–30 s in a single pass, native audio + lip-sync, 9:16 |
 | TTS (fallback / overlay) | fal.ai ElevenLabs / MiniMax | deterministic verbatim text |
 | STT (verification) | fal.ai Whisper | R4 check |

@@ -1,4 +1,4 @@
-"""Builds the dependency bundle for a run: real providers or in-process fakes (`--dry-run`)."""
+"""Builds the dependency bundle for a run from config via the provider registry."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ from holywater.providers.base import (
     JudgeProvider,
     LipsyncProvider,
     LLMProvider,
-    NoopJudge,
     STTProvider,
     TTSProvider,
     VideoProvider,
 )
+from holywater.providers.registry import ProviderRegistry
 from holywater.storage import RunRepository, init_db, make_engine
 
 log = get_logger(__name__)
@@ -65,55 +65,37 @@ def build_deps(
     init_db(engine)
     repo = RunRepository(engine)
 
+    registry = ProviderRegistry(config, secrets, ffmpeg=ffmpeg, dry_run=dry_run)
     if dry_run:
-        from holywater.providers import fake
-
         log.info("wiring.dry_run", note="using in-process fake providers; no external calls")
-        return PipelineDeps(
-            config=config,
-            repo=repo,
-            ffmpeg=ffmpeg,
-            llm=fake.FakeLLM(),
-            video=fake.FakeVideo(ffmpeg=ffmpeg),
-            tts=fake.FakeTTS(ffmpeg=ffmpeg),
-            stt=fake.FakeSTT(),
-            judge=fake.FakeJudge() if config.judge.enabled else NoopJudge(),
-            lipsync=fake.FakeLipsync() if config.audio.lipsync.enabled else None,
-            dry_run=True,
-            git_sha=git_sha(),
+    else:
+        log.info(
+            "wiring.providers",
+            llm=f"{config.llm.provider}:{config.llm.model}",
+            video=f"{config.video.provider}:{config.video.model}",
+            tts=f"{config.audio.tts.provider}:{config.audio.tts.model}",
+            stt=f"{config.audio.stt.provider}:{config.audio.stt.model}",
+            lipsync=(
+                f"{config.audio.lipsync.provider}:{config.audio.lipsync.model}"
+                if config.audio.lipsync.enabled
+                else "disabled"
+            ),
         )
-
-    secrets.require("fal_key", "openrouter_api_key")
-    from holywater.providers.fal_lipsync import FalLipsync
-    from holywater.providers.fal_stt import FalSTT
-    from holywater.providers.fal_tts import FalTTS
-    from holywater.providers.fal_video import FalVideo
-    from holywater.providers.openrouter_llm import OpenRouterLLM
-    from holywater.providers.typesafe_judge import build_judge
-
-    assert secrets.fal_key is not None and secrets.openrouter_api_key is not None
-    fal_key = secrets.fal_key.get_secret_value()
-    timeouts = config.retries.timeouts_s
     return PipelineDeps(
         config=config,
         repo=repo,
         ffmpeg=ffmpeg,
-        llm=OpenRouterLLM(
-            api_key=secrets.openrouter_api_key.get_secret_value(),
-            model=config.llm.model,
-            base_url=config.llm.base_url,
-            timeout_s=timeouts.llm,
-        ),
-        video=FalVideo(api_key=fal_key, model=config.video.model, timeout_s=timeouts.video),
-        tts=FalTTS(api_key=fal_key, model=config.audio.tts.model, timeout_s=timeouts.tts),
-        stt=FalSTT(api_key=fal_key, model=config.audio.stt.model, timeout_s=timeouts.stt),
-        judge=build_judge(config.judge, secrets.typesafe_api_key, timeout_s=timeouts.judge),
+        llm=registry.llm(config.llm.provider),
+        video=registry.video(config.video.provider),
+        tts=registry.tts(config.audio.tts.provider),
+        stt=registry.stt(config.audio.stt.provider),
+        judge=registry.judge(),
         lipsync=(
-            FalLipsync(api_key=fal_key, model=config.audio.lipsync.model, timeout_s=timeouts.video)
+            registry.lipsync(config.audio.lipsync.provider)
             if config.audio.lipsync.enabled
             else None
         ),
-        dry_run=False,
+        dry_run=dry_run,
         git_sha=git_sha(),
     )
 

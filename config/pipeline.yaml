@@ -1,7 +1,11 @@
 # Pipeline configuration. Every model, threshold and retry policy lives here; secrets live in .env.
+#
+# Each capability picks its vendor with `provider:` (fal | openrouter) and a vendor-specific
+# `model:` id. OpenRouter alone covers LLM, video, TTS and STT with one key; fal adds lipsync.
 version: 1
 
 llm:
+  provider: openrouter
   model: "anthropic/claude-sonnet-5.5"       # any OpenRouter model id with structured outputs
   temperature: null                            # null = not sent; Claude 5.x endpoints do not accept it
   max_attempts: 3                              # retries on invalid schema / line-substring violation
@@ -17,8 +21,8 @@ judge:                                         # TypeSafe Jev; disabled or no ke
     enabled: true
 
 video:
-  provider: fal
-  model: "bytedance/seedance-2.5/text-to-video"
+  provider: openrouter                         # openrouter: bytedance/seedance-2.5 | fal: bytedance/seedance-2.5/text-to-video
+  model: "bytedance/seedance-2.5"
   resolution: "480p"                           # 480p for dev iterations, 720p for final samples
   aspect_ratio: "9:16"
   generate_audio: true
@@ -28,14 +32,17 @@ audio:
   strategy: native                             # native | tts_overlay
   native_attempts: 2                           # native tries per shot before falling back to TTS
   tts:
-    model: "fal-ai/elevenlabs/tts/eleven-v3"
-    voice: "Rachel"
+    provider: openrouter                       # openrouter: elevenlabs/eleven-v3 | fal: fal-ai/elevenlabs/tts/eleven-v3
+    model: "elevenlabs/eleven-v3"
+    voice: "sarah"
+  stt:
+    provider: openrouter                       # openrouter: openai/whisper-large-v3 | fal: fal-ai/whisper
+    model: "openai/whisper-large-v3"
+    language: auto
   lipsync:
+    provider: fal                              # fal only
     enabled: false
     model: "fal-ai/sync-lipsync/v2"
-  stt:
-    model: "fal-ai/whisper"
-    language: auto
 
 quality:
   max_wer: 0.10
@@ -45,6 +52,13 @@ quality:
 retries:
   provider: {attempts: 3, backoff_s: [5, 15, 45]}
   timeouts_s: {llm: 60, video: 600, tts: 60, stt: 120, judge: 10}
+
+providers:                                     # vendor-wide connection settings
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    video_poll_interval_s: 10
+  fal:
+    lipsync_sync_mode: cut_off
 
 hitl:                                          # documented HITL points; all disabled in the PoC
   after_script: {enabled: false}

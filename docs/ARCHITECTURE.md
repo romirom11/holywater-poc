@@ -3,7 +3,7 @@
 ## 1. Principles
 
 1. **A stage is a pure function** `(inputs, config, ctx) -> artifact`. No stage knows about Prefect; the Prefect wrapper lives in `flows/`.
-2. **A provider is an adapter behind a Protocol.** `VideoProvider`, `TTSProvider`, `STTProvider`, `LLMProvider`, `LipsyncProvider`, `JudgeProvider`. Stages depend on protocols, not on fal/openrouter.
+2. **Capabilities are Protocols, vendors are classes.** `LLMProvider`, `VideoProvider`, `TTSProvider`, `STTProvider`, `LipsyncProvider`, `JudgeProvider` are the contracts; one vendor class (`FalProvider`, `OpenRouterProvider`) implements several of them. Stages depend on a capability; `providers/registry.py` picks the vendor named in config (ADR-008).
 3. **Anything that can change without changing logic lives in config.** Models, parameters, thresholds, retries.
 4. **Errors are typed**; each one is either retried, falls back, or fails the run — but it is always logged with context.
 5. **Artifacts are files on disk, metadata is in SQLite**; no "magic" paths in code — everything goes through `RunPaths`.
@@ -28,14 +28,12 @@ holywater-poc/
 │   │   ├── enums.py            # StageName, StageStatus, AudioStrategy, FailureKind
 │   │   └── report.py           # RunReport, StageMetrics, CostEstimate (exported from the DB)
 │   ├── providers/
-│   │   ├── base.py             # Protocols + ProviderError taxonomy
-│   │   ├── fal_base.py         # single fal client: submit/poll/download, timeouts, error mapping
-│   │   ├── fal_video.py        # Seedance 2.5 / 2.0 adapter
-│   │   ├── fal_tts.py          # ElevenLabs / MiniMax adapter
-│   │   ├── fal_stt.py          # Whisper adapter
-│   │   ├── fal_lipsync.py      # sync-lipsync adapter (optional)
-│   │   ├── openrouter_llm.py   # structured output via json_schema
-│   │   └── typesafe_judge.py   # Jev: Noul/Choice/Score; NoopJudge when disabled
+│   │   ├── base.py             # capability Protocols + request/result types
+│   │   ├── registry.py         # provider name (config) -> vendor instance, capability-checked
+│   │   ├── fal.py              # FalProvider: video + TTS + STT + lipsync (one client, one error map)
+│   │   ├── openrouter.py       # OpenRouterProvider: LLM + video + TTS + STT (one key)
+│   │   ├── typesafe.py         # TypeSafeJudge (Jev); NoopJudge when disabled
+│   │   └── fake.py             # in-process fakes for --dry-run and tests
 │   ├── stages/                 # pure stages (see DATA_FLOW)
 │   │   ├── write_script.py
 │   │   ├── preflight_script.py # Jev gate before paid generation
@@ -73,7 +71,7 @@ holywater-poc/
 ## 3. Layers and dependencies
 
 ```
-cli → flows → stages → providers (Protocol) → fal / openrouter / typesafe
+cli → flows → stages → providers (capability Protocols) → registry → fal / openrouter / typesafe
                  ↓          ↓
               quality     media (ffmpeg)
                  ↓
@@ -85,29 +83,27 @@ Rule: arrows point down only. `domain` and `observability` import nothing from o
 
 ## 4. Configuration
 
-`config/pipeline.yaml` (secrets in `.env`):
+`config/pipeline.yaml` (secrets in `.env`). Every capability names its **vendor** (`provider:`) and a
+vendor-specific **model** id; vendor-wide connection settings sit under `providers:`.
 
 ```yaml
 version: 1
 
 llm:
-  model: "anthropic/claude-sonnet-5.5"     # any OpenRouter id with structured outputs
-  temperature: 0.7
+  provider: openrouter                       # fal has no LLM capability
+  model: "anthropic/claude-sonnet-5.5"
+  temperature: null                          # null = not sent (Claude 5.x endpoints reject it)
   max_attempts: 3                            # retries on invalid schema / line-substring violation
 
 judge:                                       # Jev (TypeSafe AI); disabled → NoopJudge
   enabled: true
   model: "jev-latest"
-  preflight:
-    enabled: true
-    safety_risk_threshold: 0.7               # Noul p > → rewrite prompt before generation
-    min_filmability_score: 3                 # Score 1..5 < → retry LLM
-  failure_classifier:
-    enabled: true
+  preflight: {enabled: true, safety_risk_threshold: 0.7, min_filmability_score: 3}
+  failure_classifier: {enabled: true}
 
 video:
-  provider: fal
-  model: "bytedance/seedance-2.5/text-to-video"
+  provider: openrouter                       # openrouter: bytedance/seedance-2.5 | fal: bytedance/seedance-2.5/text-to-video
+  model: "bytedance/seedance-2.5"
   resolution: "480p"                         # 480p dev / 720p final — the only place this is set
   aspect_ratio: "9:16"
   generate_audio: true
@@ -115,16 +111,10 @@ video:
 
 audio:
   strategy: native                           # native | tts_overlay
-  native_attempts: 2                         # how many native tries before fallback
-  tts:
-    model: "fal-ai/elevenlabs/tts/eleven-v3" # or fal-ai/minimax/speech-02-hd
-    voice: "Rachel"
-  lipsync:
-    enabled: false
-    model: "fal-ai/sync-lipsync/v2"
-  stt:
-    model: "fal-ai/whisper"
-    language: auto
+  native_attempts: 2                         # native tries per shot before falling back to TTS
+  tts: {provider: openrouter, model: "elevenlabs/eleven-v3", voice: "sarah"}
+  stt: {provider: openrouter, model: "openai/whisper-large-v3", language: auto}
+  lipsync: {provider: fal, enabled: false, model: "fal-ai/sync-lipsync/v2"}
 
 quality:
   max_wer: 0.10
@@ -133,7 +123,11 @@ quality:
 
 retries:
   provider: {attempts: 3, backoff_s: [5, 15, 45]}
-  timeouts_s: {llm: 60, video: 600, tts: 60, stt: 120}
+  timeouts_s: {llm: 60, video: 600, tts: 60, stt: 120, judge: 10}
+
+providers:
+  openrouter: {base_url: "https://openrouter.ai/api/v1", video_poll_interval_s: 10}
+  fal: {lipsync_sync_mode: cut_off}
 
 storage:
   runs_dir: "runs"
@@ -141,9 +135,11 @@ storage:
   final_name: "final.mp4"
 ```
 
-`.env`: `FAL_KEY`, `OPENROUTER_API_KEY`, `TYPESAFE_API_KEY` (optional).
+`.env`: `OPENROUTER_API_KEY` (required with the defaults), `FAL_KEY` (only if any capability names
+`fal`), `TYPESAFE_API_KEY` (optional).
 
-Config validation — pydantic at startup; an invalid config = `ConfigError` before any paid call.
+Config validation — pydantic at startup; an invalid config, an unknown vendor, a vendor without the
+requested capability, or a missing key for a vendor in use = `ConfigError` before any paid call.
 
 ## 5. Error handling
 
@@ -164,7 +160,7 @@ Rules:
 - `retry_condition_fn` in Prefect tasks retries **only** `RetryableProviderError` and `MediaError`.
 - `QualityGateError` is handled in the flow (not in the task): the decision "regenerate the shot / switch strategy / stop" is orchestration logic.
 - No `except Exception: pass`. Every `except` either logs and re-raises a typed error, or logs and returns an explicit fallback result recorded in the DB.
-- All fal/openrouter errors are mapped to the taxonomy in one place (`fal_base.py`, `openrouter_llm.py`).
+- Each vendor maps its errors to the taxonomy in one place (`fal.py`, `openrouter.py`), using the shared `RETRYABLE_HTTP_STATUS` rule.
 - On a fatal error `runs.status = failed`, `stages.error = {...}`, and `report.json` is still exported (partial metrics are valuable).
 - Jev unavailable (no key, 429, timeout) is a `WARNING`, not an error: `NoopJudge` behavior, the `unknown` decision is written to the DB.
 

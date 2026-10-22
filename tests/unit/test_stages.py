@@ -2,8 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from holywater.config.schema import JudgeConfig, LLMConfig, PreflightConfig, QualityConfig
+from holywater.config.schema import (
+    JudgeConfig,
+    LLMConfig,
+    PreflightConfig,
+    QualityConfig,
+    STTConfig,
+)
 from holywater.domain.enums import AudioStrategy, FailureKind
+from holywater.domain.media import MediaInfo
 from holywater.domain.script import Script
 from holywater.observability.errors import ScriptError
 from holywater.prompts import load_prompt
@@ -102,9 +109,31 @@ def test_build_shot_prompt_variants() -> None:
 # -- verify_speech -----------------------------------------------------------------------------
 
 
+class _StubFFmpeg:
+    """Unit tests never spawn ffmpeg: audio extraction just creates an empty wav file."""
+
+    def extract_audio(self, src: Path, dst: Path, *, sample_rate: int = 16000) -> MediaInfo:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(b"")
+        return MediaInfo(
+            duration_s=1.0,
+            width=0,
+            height=0,
+            fps=0.0,
+            has_video=False,
+            has_audio=True,
+            size_bytes=0,
+        )
+
+
 def _verify_deps(stt: FakeSTT, judge: FakeJudge | NoopJudge) -> VerifyDeps:
     return VerifyDeps(
-        stt=stt, judge=judge, quality=QualityConfig(max_wer=0.1), judge_config=JudgeConfig()
+        stt=stt,
+        judge=judge,
+        ffmpeg=_StubFFmpeg(),  # type: ignore[arg-type]
+        stt_config=STTConfig(model="fake-stt"),
+        quality=QualityConfig(max_wer=0.1),
+        judge_config=JudgeConfig(),
     )
 
 

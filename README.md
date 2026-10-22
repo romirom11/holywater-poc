@@ -34,9 +34,17 @@ cp .env.example .env         # then fill in the keys
 
 | Key | Used for | Required |
 |-----|----------|----------|
-| `FAL_KEY` | Seedance video, ElevenLabs TTS, Whisper STT, lipsync | yes |
-| `OPENROUTER_API_KEY` | script writing (`anthropic/claude-sonnet-5.5` by default) | yes |
+| `OPENROUTER_API_KEY` | LLM, Seedance video, ElevenLabs TTS, Whisper STT — the defaults use only this key | yes |
+| `FAL_KEY` | any capability whose `provider: fal` (lipsync is fal-only) | only then |
 | `TYPESAFE_API_KEY` | Jev typed judge (script pre-flight, failure classification) | no — runs without it |
+
+Every capability can be pointed at a different vendor in `config/pipeline.yaml`:
+
+```yaml
+video: {provider: fal, model: "bytedance/seedance-2.5/text-to-video", ...}   # instead of openrouter
+audio:
+  tts: {provider: fal, model: "fal-ai/elevenlabs/tts/eleven-v3", voice: "Rachel"}
+```
 
 ## Run
 
@@ -75,7 +83,7 @@ uv run mypy
 uv run pytest            # unit + integration (ffmpeg, Prefect flow with fakes); no network
 ```
 
-Layout: `domain/` (pydantic contracts) → `providers/` (adapters behind Protocols, incl. fakes)
+Layout: `domain/` (pydantic contracts) → `providers/` (capability Protocols, vendor classes `fal.py` / `openrouter.py`, registry, fakes)
 → `stages/` (pure functions) → `flows/` (Prefect orchestration: retries, fallbacks, state)
 → `storage/` (SQLite via SQLModel) · `media/` (ffmpeg) · `quality/` (gates, WER) ·
 `observability/` (typed errors, structlog). Prompts are versioned files in `src/holywater/prompts/`.

@@ -25,10 +25,18 @@ class AudioDeps:
 def generate_line_audio(script: Script, deps: AudioDeps, *, dest: Path) -> AudioArtifact:
     d = script.dialogue
     log.info(
-        "generate_audio.start", chars=len(d.text), language=d.language, voice=deps.config.voice
+        "generate_audio.start",
+        provider=deps.config.provider,
+        model=deps.config.model,
+        chars=len(d.text),
+        language=d.language,
+        voice=deps.config.voice,
     )
     result = deps.tts.synthesize(
-        TTSRequest(text=d.text, language=d.language, voice=deps.config.voice), dest=dest
+        TTSRequest(
+            model=deps.config.model, text=d.text, language=d.language, voice=deps.config.voice
+        ),
+        dest=dest,
     )
     info = deps.ffmpeg.probe(result.path)
     log.info("generate_audio.done", duration_s=round(info.duration_s, 2), cost_usd=result.cost_usd)

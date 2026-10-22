@@ -93,6 +93,7 @@ def generate_shot(
 ) -> VideoArtifact:
     rendered = build_shot_prompt(script, shot, strategy=strategy, prompt=deps.prompt, strict=strict)
     request = VideoRequest(
+        model=deps.config.model,
         prompt=rendered.text,
         duration_s=shot.duration_s,
         resolution=deps.config.resolution,
@@ -104,6 +105,8 @@ def generate_shot(
         "generate_video.start",
         shot_id=shot.id,
         attempt=attempt,
+        provider=deps.config.provider,
+        model=deps.config.model,
         strategy=strategy.value,
         strict=strict,
         duration_s=shot.duration_s,

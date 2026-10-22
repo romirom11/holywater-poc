@@ -21,15 +21,18 @@ anything structural; `docs/DECISIONS.md` explains *why* things are the way they 
 5. **Stages are pure; the flow decides.** `stages/*` take explicit deps and return artifacts;
    they know nothing about Prefect or SQL. Retries live on tasks in `flows/`; quality-gate
    decisions (regenerate, fall back, stop) live in the flow body.
-6. **Providers only through Protocols.** New external API → adapter in `providers/` implementing
-   a `providers/base.py` Protocol, error mapping to `RetryableProviderError` / `FatalProviderError`
-   in one place, plus a `Fake*` counterpart in `providers/fake.py` so `--dry-run` still works.
+6. **Capabilities are Protocols, vendors are classes.** Stages depend on a capability from
+   `providers/base.py`; `providers/registry.py` picks the vendor named in config. A new vendor is
+   one class in `providers/<vendor>.py` implementing every capability it offers, with one client
+   and one error map (`RetryableProviderError` / `FatalProviderError`), registered in
+   `registry.VENDORS`. A new capability needs a Protocol, a request type carrying `model`, a
+   `Fake*` in `providers/fake.py`, and a config section with `provider:` + `model:`.
 7. **Repo artifacts are in English** (docs, comments, commit messages, log events).
 
 ## Layering (arrows point down only)
 
 ```
-cli → flows → stages → providers (Protocols) → fal / openrouter / typesafe
+cli → flows → stages → providers (capability Protocols) → registry → fal / openrouter / typesafe
                  ↓         ↓
               quality    media (ffmpeg)
                  ↓
@@ -76,7 +79,7 @@ change to stages, flow, storage or media.
 
 ## Spending real money
 
-Real runs need `FAL_KEY` and `OPENROUTER_API_KEY` in `.env`. A 480p run is roughly $1.5–4
+Real runs need `OPENROUTER_API_KEY` in `.env` (and `FAL_KEY` only if a capability names `fal`). A 480p run is roughly $1.5–4
 (Seedance 2.5 ≈ $0.22/s at 480p, $0.47/s at 720p; each retry doubles the shot cost). Keep
 `video.resolution: 480p` while iterating; switch to `720p` only for final samples. Do not start
 paid runs or eval suites on your own initiative — ask first.
@@ -85,7 +88,8 @@ paid runs or eval suites on your own initiative — ask first.
 
 | Need | Look at |
 |------|---------|
-| Add/replace a model | `config/pipeline.yaml`, `providers/*` |
+| Switch vendor or model for a capability | `config/pipeline.yaml` (`provider:` + `model:`) |
+| Add a vendor | `providers/<vendor>.py` + `providers/registry.py` (`VENDORS`, `_build`) |
 | Change retry/fallback logic | `flows/generate_video_flow.py` (`_produce_shot`) |
 | Change what counts as "verbatim" | `quality/text_norm.py` + tests in `tests/unit/test_text_norm.py` |
 | Change the video prompt | `src/holywater/prompts/seedance_shot.md` (bump version) |

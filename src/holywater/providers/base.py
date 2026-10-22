@@ -1,18 +1,22 @@
-"""Provider contracts. Every external API is wrapped by an adapter implementing one of these."""
+"""Capability contracts (ADR-008).
+
+A *vendor* (fal, OpenRouter, TypeSafe) is one class that may implement several of these
+capability Protocols. Stages depend on a capability, never on a vendor; `providers.registry`
+picks the vendor named in config and checks it actually implements the capability.
+
+Every request carries the `model` to use, so one vendor instance serves any number of models.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
 from holywater.domain.enums import Resolution
-
-T = TypeVar("T", bound=BaseModel)
-
 
 # -- LLM --------------------------------------------------------------------------------------
 
@@ -27,10 +31,12 @@ class LLMResult[T: BaseModel]:
     raw_text: str = ""
 
 
+@runtime_checkable
 class LLMProvider(Protocol):
-    def complete_structured(
+    def complete_structured[T: BaseModel](
         self,
         *,
+        model: str,
         system: str,
         user: str,
         schema: type[T],
@@ -46,6 +52,7 @@ class LLMProvider(Protocol):
 
 @dataclass(frozen=True)
 class VideoRequest:
+    model: str
     prompt: str
     duration_s: int
     resolution: Resolution
@@ -64,6 +71,7 @@ class VideoResult:
     cost_usd: float = 0.0
 
 
+@runtime_checkable
 class VideoProvider(Protocol):
     def generate(self, request: VideoRequest, *, dest: Path) -> VideoResult:
         """Generate a clip and download it to `dest`."""
@@ -75,6 +83,7 @@ class VideoProvider(Protocol):
 
 @dataclass(frozen=True)
 class TTSRequest:
+    model: str
     text: str
     language: str
     voice: str | None = None
@@ -87,8 +96,18 @@ class TTSResult:
     cost_usd: float = 0.0
 
 
+@runtime_checkable
 class TTSProvider(Protocol):
     def synthesize(self, request: TTSRequest, *, dest: Path) -> TTSResult: ...
+
+
+@dataclass(frozen=True)
+class STTRequest:
+    model: str
+    audio_path: Path
+    language: str | None = None
+    source_path: Path | None = None
+    """The media the audio was extracted from (traceability; fakes read their sidecar here)."""
 
 
 @dataclass(frozen=True)
@@ -99,8 +118,16 @@ class STTResult:
     cost_usd: float = 0.0
 
 
+@runtime_checkable
 class STTProvider(Protocol):
-    def transcribe(self, audio_or_video: Path, *, language: str | None = None) -> STTResult: ...
+    def transcribe(self, request: STTRequest) -> STTResult: ...
+
+
+@dataclass(frozen=True)
+class LipsyncRequest:
+    model: str
+    video_path: Path
+    audio_path: Path
 
 
 @dataclass(frozen=True)
@@ -110,8 +137,9 @@ class LipsyncResult:
     cost_usd: float = 0.0
 
 
+@runtime_checkable
 class LipsyncProvider(Protocol):
-    def sync(self, video: Path, audio: Path, *, dest: Path) -> LipsyncResult: ...
+    def sync(self, request: LipsyncRequest, *, dest: Path) -> LipsyncResult: ...
 
 
 # -- Typed judge (Jev) ------------------------------------------------------------------------
@@ -164,3 +192,11 @@ class NoopJudge:
 
     def ask_score(self, state: str, question: str, *, levels: int) -> JudgeAnswer:
         return JudgeAnswer(question=question, answer="unknown", available=False)
+
+
+# -- shared helpers for vendor adapters -------------------------------------------------------
+
+# HTTP statuses worth retrying with backoff; everything else 4xx is the caller's fault.
+RETRYABLE_HTTP_STATUS: frozenset[int] = frozenset(
+    {408, 409, 425, 429, 500, 502, 503, 504, 524, 529}
+)

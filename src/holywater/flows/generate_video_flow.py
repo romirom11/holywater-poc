@@ -110,9 +110,12 @@ def t_verify_speech(
         deps=verify_stage.VerifyDeps(
             stt=deps.stt,
             judge=deps.judge,
+            ffmpeg=deps.ffmpeg,
+            stt_config=deps.config.audio.stt,
             quality=deps.config.quality,
             judge_config=deps.config.judge,
         ),
+        work_dir=media_path.parent.parent / "work",
     )
 
 
@@ -132,6 +135,7 @@ def t_assemble(
             quality=deps.config.quality,
             resolution=deps.config.video.resolution,
             lipsync=deps.lipsync,
+            lipsync_config=deps.config.audio.lipsync,
         ),
         work_dir=work_dir,
         dest=dest,

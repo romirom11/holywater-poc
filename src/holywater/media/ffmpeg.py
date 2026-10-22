@@ -189,6 +189,29 @@ class FFmpeg:
         )
         return self.probe(dst)
 
+    def extract_audio(self, src: Path, dst: Path, *, sample_rate: int = 16000) -> MediaInfo:
+        """Mono 16-bit WAV of the audio track — the input every STT vendor accepts."""
+        self._run(
+            [
+                self.ffmpeg_bin,
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(src),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(dst),
+            ],
+            op="extract_audio",
+        )
+        return self.probe(dst)
+
     def trim(self, src: Path, dst: Path, *, max_s: float) -> MediaInfo:
         self._run(
             [

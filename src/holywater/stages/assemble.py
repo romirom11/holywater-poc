@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from holywater.config.schema import QualityConfig
+from holywater.config.schema import LipsyncConfig, QualityConfig
 from holywater.domain.artifacts import AudioArtifact, FinalVideo, VideoArtifact
 from holywater.domain.enums import AudioStrategy, Resolution
 from holywater.media import FFmpeg
 from holywater.media.ffmpeg import VERTICAL_SIZES
 from holywater.observability.logging import get_logger
-from holywater.providers.base import LipsyncProvider
+from holywater.providers.base import LipsyncProvider, LipsyncRequest
 from holywater.quality.gates import DurationGate, MediaIntegrityGate
 
 log = get_logger(__name__)
@@ -23,6 +23,7 @@ class AssembleDeps:
     quality: QualityConfig
     resolution: Resolution
     lipsync: LipsyncProvider | None = None
+    lipsync_config: LipsyncConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -99,9 +100,14 @@ def assemble(
 def _mix_voice(clip: Path, voice: VoiceOverlay, deps: AssembleDeps, work_dir: Path) -> Path:
     mixed = work_dir / f"{clip.stem}_voice.mp4"
     deps.ffmpeg.overlay_voice(clip, voice.audio.path, mixed, offset_s=voice.offset_s)
-    if deps.lipsync is None:
+    if deps.lipsync is None or deps.lipsync_config is None:
         return mixed
     synced = work_dir / f"{clip.stem}_lipsync.mp4"
-    result = deps.lipsync.sync(mixed, voice.audio.path, dest=synced)
+    result = deps.lipsync.sync(
+        LipsyncRequest(
+            model=deps.lipsync_config.model, video_path=mixed, audio_path=voice.audio.path
+        ),
+        dest=synced,
+    )
     log.info("assemble.lipsync", model=result.model, cost_usd=result.cost_usd)
     return result.path

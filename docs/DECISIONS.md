@@ -152,3 +152,36 @@ It is TypeSafe AI — not Typeframes.
 **Risks.** Early access; signups paused since 2026-09-22 — if there is no key, we run without it. English works best —
 we pass state in English (shot prompts are in English anyway; for failure classification we pass both texts + a
 transliterated diff). Vendor benchmarks without independent verification — so thresholds (0.7, 3) go to config and get calibrated on the eval set.
+
+---
+
+## ADR-008. Vendors are classes, capabilities are Protocols, config picks the vendor
+
+**Context.** The first cut had one file per *(vendor, capability)* pair (`fal_video.py`, `fal_tts.py`,
+`fal_stt.py`, `fal_lipsync.py`, `openrouter_llm.py`). With a single vendor that looked like
+over-splitting, and adding OpenRouter's video/TTS/STT endpoints would have doubled the file count.
+
+**Decision.**
+- `providers/base.py` keeps the *capability* contracts (`LLMProvider`, `VideoProvider`, `TTSProvider`,
+  `STTProvider`, `LipsyncProvider`, `JudgeProvider`). Every request carries its `model`, so a vendor
+  instance is model-agnostic.
+- One class per *vendor* implements all the capabilities it offers: `FalProvider` (video, TTS, STT,
+  lipsync — one `SyncClient`, one submit/poll, one download, one error map) and `OpenRouterProvider`
+  (LLM, video, TTS, STT — one key, one `httpx.Client`, one status→error rule).
+- `providers/registry.py` resolves the `provider:` named in each config section to a vendor instance,
+  built once per run, and raises `ConfigError` if the vendor lacks the capability or its key is missing.
+  Switching video from fal to OpenRouter is a two-line YAML change (`provider`, `model`).
+- Defaults: everything on OpenRouter (one key covers the whole pipeline); lipsync stays fal-only.
+
+**OpenRouter media endpoints used.** `POST /videos` → poll `GET /videos/{id}` (`pending`/`in_progress`
+→ `completed`/`failed`) → `GET /videos/{id}/content`; the poll response reports the real `usage.cost`.
+`POST /audio/speech` (mp3 bytes). `POST /audio/transcriptions` with base64 WAV; the pipeline extracts
+a mono 16 kHz WAV with ffmpeg first so fal and OpenRouter get identical STT input.
+
+**Alternatives.** Keep per-capability adapters and compose them — more files, duplicated clients and
+error mapping. A plugin/entry-point system — overkill for two vendors.
+
+**Risks.** A vendor class grows with each capability; mitigated by keeping shared internals
+(`_call`/`_download`/`_map_*`) private and capability methods thin. Cost figures differ in nature:
+OpenRouter reports actual cost for video/STT/LLM, fal and TTS are table estimates — the report
+records both the same way (`costs` rows), so compare tags with that in mind.

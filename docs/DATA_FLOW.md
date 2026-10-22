@@ -98,7 +98,8 @@ For `tts_overlay`: the same template, but `[Audio] no dialogue, no speech; {ambi
 
 - Each stage receives its input through `RunRepository` (artifact paths, previous decisions) and writes its artifact to disk + DB rows in a single transaction with the stage status change.
 - A Prefect task is a thin wrapper: `repo.start_stage → call stage → repo.finish_stage → return artifact ref`. Tasks pass pydantic models with paths/ids between them, not binary data.
-- Media from fal is downloaded immediately (fal URLs are temporary) — `fal_base.download()` with `content_type` and size checks.
+- Generated media is downloaded immediately (vendor URLs are temporary) — each vendor's `_download()` checks `content_type` and size.
+- Before STT the audio track is extracted to a mono 16 kHz WAV (`work/<clip>.stt.wav`) so every STT vendor receives the same input.
 
 ## 6. Error handling per stage
 

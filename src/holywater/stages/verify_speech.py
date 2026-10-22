@@ -1,15 +1,19 @@
-"""Stage 4: STT on the dialogue clip, WER gate, and (optionally) failure classification by Jev."""
+"""Stage 4: STT on the dialogue clip, WER gate, and (optionally) failure classification by Jev.
+
+The audio track is extracted to a mono 16 kHz WAV first so every STT vendor gets the same input.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from holywater.config.schema import JudgeConfig, QualityConfig
+from holywater.config.schema import JudgeConfig, QualityConfig, STTConfig
 from holywater.domain.artifacts import SpeechVerification
 from holywater.domain.enums import FailureKind
+from holywater.media import FFmpeg
 from holywater.observability.logging import get_logger
-from holywater.providers.base import JudgeAnswer, JudgeProvider, STTProvider
+from holywater.providers.base import JudgeAnswer, JudgeProvider, STTProvider, STTRequest
 from holywater.quality.gates import SpeechGate
 
 log = get_logger(__name__)
@@ -31,6 +35,8 @@ _CLASSIFIABLE = [
 class VerifyDeps:
     stt: STTProvider
     judge: JudgeProvider
+    ffmpeg: FFmpeg
+    stt_config: STTConfig
     quality: QualityConfig
     judge_config: JudgeConfig
 
@@ -50,14 +56,27 @@ def verify_speech(
     expected: str,
     language: str,
     deps: VerifyDeps,
+    work_dir: Path | None = None,
 ) -> VerifyResult:
     """Transcribe and compare. Provider errors propagate (the flow decides on retries)."""
-    stt = deps.stt.transcribe(media_path, language=language)
+    wav = (work_dir or media_path.parent) / f"{media_path.stem}.stt.wav"
+    deps.ffmpeg.extract_audio(media_path, wav)
+    stt_language = language if deps.stt_config.language == "auto" else deps.stt_config.language
+    stt = deps.stt.transcribe(
+        STTRequest(
+            model=deps.stt_config.model,
+            audio_path=wav,
+            language=stt_language,
+            source_path=media_path,
+        )
+    )
     result = SpeechGate(max_wer=deps.quality.max_wer).check(expected, stt.text, language)
     log.info(
         "verify_speech.result",
         shot_id=shot_id,
         attempt=attempt,
+        provider=deps.stt_config.provider,
+        model=stt.model,
         wer=result.measured,
         passed=result.passed,
         transcript=stt.text,

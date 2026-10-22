@@ -1,4 +1,8 @@
-"""Typed view of `config/pipeline.yaml` (see docs/ARCHITECTURE.md §4)."""
+"""Typed view of `config/pipeline.yaml` (see docs/ARCHITECTURE.md §4).
+
+Each capability section names its `provider` (vendor) and `model`; vendor-wide connection
+settings live under `providers:`.
+"""
 
 from __future__ import annotations
 
@@ -11,17 +15,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from holywater.domain.enums import AudioStrategy, Resolution
 
+Vendor = Literal["fal", "openrouter"]
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class LLMConfig(_Strict):
+    provider: Vendor = "openrouter"
     model: str
     # None = do not send the parameter (Claude 5.x endpoints reject `temperature`).
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_attempts: int = Field(default=3, ge=1, le=10)
-    base_url: str = "https://openrouter.ai/api/v1"
 
 
 class PreflightConfig(_Strict):
@@ -42,7 +48,7 @@ class JudgeConfig(_Strict):
 
 
 class VideoConfig(_Strict):
-    provider: Literal["fal"] = "fal"
+    provider: Vendor = "openrouter"
     model: str
     resolution: Resolution = Resolution.P480
     aspect_ratio: str = "9:16"
@@ -51,16 +57,19 @@ class VideoConfig(_Strict):
 
 
 class TTSConfig(_Strict):
+    provider: Vendor = "openrouter"
     model: str
     voice: str | None = None
 
 
 class LipsyncConfig(_Strict):
+    provider: Vendor = "fal"
     enabled: bool = False
     model: str = "fal-ai/sync-lipsync/v2"
 
 
 class STTConfig(_Strict):
+    provider: Vendor = "openrouter"
     model: str
     language: str = "auto"
 
@@ -109,6 +118,20 @@ class RetriesConfig(_Strict):
     timeouts_s: TimeoutsConfig = TimeoutsConfig()
 
 
+class OpenRouterSettings(_Strict):
+    base_url: str = "https://openrouter.ai/api/v1"
+    video_poll_interval_s: float = Field(default=10.0, gt=0)
+
+
+class FalSettings(_Strict):
+    lipsync_sync_mode: Literal["cut_off", "loop", "bounce", "silence", "remap"] = "cut_off"
+
+
+class ProvidersConfig(_Strict):
+    openrouter: OpenRouterSettings = OpenRouterSettings()
+    fal: FalSettings = FalSettings()
+
+
 class HitlPointConfig(_Strict):
     enabled: bool = False
 
@@ -132,6 +155,7 @@ class PipelineConfig(_Strict):
     audio: AudioConfig
     quality: QualityConfig = QualityConfig()
     retries: RetriesConfig = RetriesConfig()
+    providers: ProvidersConfig = ProvidersConfig()
     hitl: HitlConfig = HitlConfig()
     storage: StorageConfig = StorageConfig()
 
@@ -139,3 +163,14 @@ class PipelineConfig(_Strict):
         """Stable hash of the effective config; stored per run to compare pipeline versions."""
         payload = json.dumps(self.model_dump(mode="json"), sort_keys=True).encode()
         return hashlib.sha256(payload).hexdigest()[:16]
+
+    def vendors_in_use(self) -> set[str]:
+        used: set[str] = {
+            self.llm.provider,
+            self.video.provider,
+            self.audio.tts.provider,
+            self.audio.stt.provider,
+        }
+        if self.audio.lipsync.enabled:
+            used.add(self.audio.lipsync.provider)
+        return used
