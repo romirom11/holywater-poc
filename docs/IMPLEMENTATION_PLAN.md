@@ -15,7 +15,7 @@ so each step is testable without paid calls until the very end.
 | 7 | `providers/base.py` (incl. `JudgeProvider`) + Fake providers + `NoopJudge` | — |
 | 8 | `stages/*` on Fake providers | unit happy path + every stage error |
 | 9 | `flows/` Prefect: retries, native→tts_overlay fallback, shot regeneration | e2e `--dry-run`: scenarios "all ok", "WER fail → retry → fallback", "fal 500 → backoff" |
-| 10 | Real providers: `fal_base`, `fal_video`, `fal_tts`, `fal_stt`, `openrouter_llm`, `typesafe_judge` | error mapping covered by unit tests with mock responses; manual smoke at 480p; the pipeline works without `TYPESAFE_API_KEY` (NoopJudge) |
+| 10 | Real vendors: `providers/fal.py`, `providers/openrouter.py`, `providers/typesafe.py` + `registry.py` | error mapping covered by unit tests with mock responses; manual smoke at 480p; the pipeline works without `TYPESAFE_API_KEY` (NoopJudge) |
 | 11 | `cli.py`: `generate`, `eval`, `inspect` | `hw generate --dry-run` → `final.mp4` from fake clips |
 | 12 | `report.json` + `evals/cases.yaml` + `hw eval compare` | compare prints a table for two dry-run tags |
 | 13 | Real runs: 480p dev → 720p final 2 samples | 2 videos in `samples/`, reports saved as baseline |

@@ -144,7 +144,7 @@ It is TypeSafe AI — not Typeframes.
 **What Jev does NOT do here:** it does not check verbatim-ness (that's WER in code — deterministic and exact), does not judge the picture
 (text-only), does not write prompts.
 
-**Integration.** `providers/base.py: JudgeProvider` Protocol → `providers/typesafe_judge.py`. Optional: if
+**Integration.** `providers/base.py: JudgeProvider` Protocol → `providers/typesafe.py`. Optional: if
 `TYPESAFE_API_KEY` is absent or `judge.enabled=false` — `NoopJudge` (pre-flight is skipped, the classifier returns
 `unknown` → default tactic "retry with a stricter prompt"). All Jev decisions with probabilities are written to the DB
 (`judge_decisions`) — later we can evaluate whether it actually saved money.
