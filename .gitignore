@@ -3,7 +3,6 @@
 
 # run artifacts
 runs/
-samples/*.mp4
 evals/results/
 
 # python
