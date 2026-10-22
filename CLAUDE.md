@@ -26,7 +26,9 @@ anything structural; `docs/DECISIONS.md` explains *why* things are the way they 
    one class in `providers/<vendor>.py` implementing every capability it offers, with one client
    and one error map (`RetryableProviderError` / `FatalProviderError`), registered in
    `registry.VENDORS`. A new capability needs a Protocol, a request type carrying `model`, a
-   `Fake*` in `providers/fake.py`, and a config section with `provider:` + `model:`.
+   `Fake*` in `providers/fake.py`, and a config section with `provider:` + `model:`. Request
+   bodies are verified against the vendor's OpenAPI schema and recorded in `docs/PROVIDERS_API.md`;
+   a 2xx from a live call is not evidence of conformance.
 7. **Repo artifacts are in English** (docs, comments, commit messages, log events).
 
 ## Layering (arrows point down only)
@@ -92,6 +94,7 @@ paid runs or eval suites on your own initiative — ask first.
 |------|---------|
 | Switch vendor or model for a capability | `config/pipeline.yaml` (`provider:` + `model:`) |
 | Add a vendor | `providers/<vendor>.py` + `providers/registry.py` (`VENDORS`, `_build`) |
+| Check a request against the vendor API | `docs/PROVIDERS_API.md` (schemas from `openapi.json`, not tutorials) |
 | Change retry/fallback logic | `flows/generate_video_flow.py` (`_produce_shot`) |
 | Change what counts as "verbatim" | `quality/text_norm.py` + tests in `tests/unit/test_text_norm.py` |
 | Change the video prompt | `src/holywater/prompts/seedance_shot.md` (bump version) |

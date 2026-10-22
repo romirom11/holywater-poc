@@ -167,7 +167,14 @@ def test_video_submit_poll_download(tmp_path: Path) -> None:
         if request.method == "POST" and request.url.path.endswith("/videos"):
             body = json.loads(request.content)
             assert body["duration"] == 8 and body["resolution"] == "480p" and body["seed"] == 7
-            return httpx.Response(202, json={"id": "job1", "status": "pending"})
+            return httpx.Response(
+                202,
+                json={
+                    "id": "job1",
+                    "status": "pending",
+                    "polling_url": "https://openrouter.ai/api/v1/videos/job1",
+                },
+            )
         if request.url.path.endswith("/videos/job1"):
             polls["n"] += 1
             status = "in_progress" if polls["n"] < 3 else "completed"

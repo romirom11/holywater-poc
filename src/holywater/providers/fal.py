@@ -77,7 +77,8 @@ class FalProvider:
             "generate_audio": request.generate_audio,
         }
         if request.seed is not None:
-            arguments["seed"] = request.seed
+            # Not part of the Seedance input schema on fal (seed is output-only); never send it.
+            log.warning("fal.seed_unsupported", model=request.model, seed=request.seed)
         result, request_id = self._call(request.model, arguments, op="text_to_video")
         url = _file_url(result, "video")
         self._download(url, dest, expect_prefix="video/", model=request.model)

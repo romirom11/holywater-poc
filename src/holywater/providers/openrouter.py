@@ -189,9 +189,15 @@ class OpenRouterProvider:
         if not job_id:
             msg = f"openrouter video job has no id (keys: {sorted(job)})"
             raise FatalProviderError(msg, provider=NAME, model=request.model)
-        log.info("openrouter.video.submitted", job_id=job_id, model=request.model)
+        polling_url = str(job.get("polling_url") or f"/videos/{job_id}")
+        log.info(
+            "openrouter.video.submitted",
+            job_id=job_id,
+            model=request.model,
+            status=job.get("status"),
+        )
 
-        final = self._poll_video(job_id, model=request.model)
+        final = self._poll_video(job_id, polling_url, model=request.model)
         cost = _usage_cost(final)
         self._download(
             f"/videos/{job_id}/content", dest, model=request.model, expect_prefix="video/"
@@ -206,10 +212,10 @@ class OpenRouterProvider:
             cost_is_estimate=not _has_usage_cost(final),
         )
 
-    def _poll_video(self, job_id: str, *, model: str) -> dict[str, Any]:
+    def _poll_video(self, job_id: str, polling_url: str, *, model: str) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_s
         while True:
-            job = self._json("GET", f"/videos/{job_id}", op="video.poll", model=model)
+            job = self._json("GET", polling_url, op="video.poll", model=model)
             status = str(job.get("status") or "")
             if status == "completed":
                 return job

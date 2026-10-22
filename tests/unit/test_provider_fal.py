@@ -118,8 +118,7 @@ def test_fal_video_builds_arguments_and_downloads(tmp_path: Path) -> None:
         "resolution": "480p",
         "aspect_ratio": "9:16",
         "generate_audio": True,
-        "seed": 5,
-    }
+    }  # no `seed`: it is output-only in the fal Seedance schema
     dl.assert_called_once()
     assert result.seed == 77 and result.request_id == "req-1"
     assert result.cost_usd == pytest.approx(0.2205 * 8, abs=1e-3)
