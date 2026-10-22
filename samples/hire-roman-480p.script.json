@@ -1,0 +1,27 @@
+{
+  "title": "The Last Interview",
+  "logline": "After watching an AI-made video, a stern hiring manager smiles for the first time and makes her decision.",
+  "language": "en",
+  "style": "Cinematic vertical micro-drama, realistic, shallow depth of field, cool office tones with warm light on her face at the end",
+  "shots": [
+    {
+      "id": 1,
+      "duration_s": 10,
+      "visual_prompt": "Inside a glass-walled meeting room, a stern woman in her 40s sits at a long table watching a laptop screen, her face lit by its glow. Her expression is stiff and unimpressed. As the video ends, the corners of her mouth slowly lift into a genuine smile. She looks up from the laptop toward the camera and speaks, then stays still with the smile.",
+      "camera": "Medium close-up, slow push-in from the front, 9:16 vertical, shallow depth of field",
+      "continuity": "Woman in her mid-40s, sharp features, dark hair tied in a low bun, charcoal blazer over a white blouse, thin silver earrings, seated at a long table in a modern glass meeting room with city skyline blurred behind the glass, an open laptop and a closed folder in front of her",
+      "ambient_audio": "Soft office hum, faint keyboard clicks in the distance, quiet room tone, the muted sound of a video ending on the laptop",
+      "has_dialogue": true
+    }
+  ],
+  "dialogue": {
+    "shot_id": 1,
+    "speaker": "Stern woman in her mid-40s with a dark low bun, charcoal blazer and white blouse, seated in the glass meeting room",
+    "text": "Cancel the other interviews, Roman gets the job.",
+    "language": "en",
+    "emotion": "Calm, decisive, with quiet satisfaction and a hint of warmth",
+    "start_s": 3.5,
+    "end_s": 7.5,
+    "voice_gender": "female"
+  }
+}

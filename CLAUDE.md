@@ -109,9 +109,9 @@ provider names and capabilities).
 ## Spending real money
 
 Real runs need `OPENROUTER_API_KEY` in `.env` (and `FAL_KEY` only if a capability names `fal`).
-With the defaults (OpenRouter, 480p) the one measured run — two 6 s shots, no retries — cost
-**$1.26**: Seedance 2.5 ≈ $0.1035 per second ($0.62 per 6 s shot), the LLM ≈ $0.02, STT and Jev
-well under a cent. Every regenerated or fallback clip adds its own cost again; 720p is ≈ $0.233/s
+With the defaults (OpenRouter, 480p) the measured runs, with no retries, cost **$1.26** (two 6 s
+shots) and **$1.04** (one 10 s shot): Seedance 2.5 ≈ $0.103 per second, the LLM ≈ $0.01–0.02, STT
+and Jev well under a cent. Every regenerated or fallback clip adds its own cost again; 720p is ≈ $0.233/s
 (≈ 2.25×). The fal prices ($0.22/s at 480p, $0.47/s at 720p) apply only with `video.provider: fal`.
 Keep `video.resolution: 480p`. `hw eval run` without `--dry-run` is 8 paid runs (it asks first).
 Do not start paid runs or eval suites on your own initiative — ask first.

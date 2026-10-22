@@ -1,0 +1,200 @@
+{
+  "run_id": "20261022-200844-74ae58",
+  "tag": "hire-roman",
+  "dry_run": false,
+  "success": true,
+  "status": "done",
+  "failure_stage": null,
+  "failure_type": null,
+  "input_text": "In a glass meeting room, a stern hiring manager finishes an AI-made video and smiles for the first time today. She says: \"Cancel the other interviews, Roman gets the job.\"",
+  "dialogue_line": "Cancel the other interviews, Roman gets the job.",
+  "config_hash": "9e9a8a47011c1036",
+  "git_sha": "f0d289e",
+  "models": {
+    "llm": "anthropic/claude-sonnet-5.5",
+    "video": "bytedance/seedance-2.5",
+    "tts": "elevenlabs/eleven-v3",
+    "stt": "openai/whisper-large-v3",
+    "judge": "jev-latest"
+  },
+  "prompt_versions": [
+    "scriptwriter@3",
+    "seedance_shot@2/dialogue"
+  ],
+  "audio_strategy_requested": "native",
+  "audio_strategy_used": "native",
+  "fallback_reason": null,
+  "started_at": "2026-10-22T20:08:47.118007Z",
+  "finished_at": "2026-10-22T20:11:35.631659Z",
+  "latency_s": 168.513652,
+  "stages": [
+    {
+      "name": "write_script",
+      "status": "done",
+      "entries": 1,
+      "retries": 0,
+      "duration_s": 10.852817,
+      "last_duration_s": 10.852817,
+      "error_type": null
+    },
+    {
+      "name": "preflight_script",
+      "status": "done",
+      "entries": 1,
+      "retries": 0,
+      "duration_s": 1.005549,
+      "last_duration_s": 1.005549,
+      "error_type": null
+    },
+    {
+      "name": "generate_audio",
+      "status": "skipped",
+      "entries": 0,
+      "retries": 0,
+      "duration_s": null,
+      "last_duration_s": null,
+      "error_type": null
+    },
+    {
+      "name": "generate_video",
+      "status": "done",
+      "entries": 1,
+      "retries": 0,
+      "duration_s": 157.000883,
+      "last_duration_s": 157.000883,
+      "error_type": null
+    },
+    {
+      "name": "verify_speech",
+      "status": "done",
+      "entries": 1,
+      "retries": 0,
+      "duration_s": 2.174569,
+      "last_duration_s": 2.174569,
+      "error_type": null
+    },
+    {
+      "name": "assemble",
+      "status": "done",
+      "entries": 1,
+      "retries": 0,
+      "duration_s": 0.647323,
+      "last_duration_s": 0.647323,
+      "error_type": null
+    }
+  ],
+  "shots": [
+    {
+      "shot_id": 1,
+      "has_dialogue": true,
+      "attempts": 1,
+      "final_attempt": 1,
+      "final_strategy": "native",
+      "final_wer": 0.0,
+      "verified": true,
+      "failure_kinds": [],
+      "stray_speech_words": null,
+      "cost_usd": 1.0323
+    }
+  ],
+  "line_verified": true,
+  "shots_regenerated": 0,
+  "failure_kinds": {},
+  "retries_total": 0,
+  "judge_decisions": 3,
+  "preflight_rewrites": 0,
+  "costs": [
+    {
+      "stage": "write_script",
+      "provider": "openrouter",
+      "model": "anthropic/claude-sonnet-5.5",
+      "cost_usd": 0.009958,
+      "is_estimate": false,
+      "shot_id": null,
+      "attempt": null
+    },
+    {
+      "stage": "preflight_script",
+      "provider": "typesafe",
+      "model": "jev-latest",
+      "cost_usd": 0.00002213,
+      "is_estimate": true,
+      "shot_id": null,
+      "attempt": null
+    },
+    {
+      "stage": "preflight_script",
+      "provider": "typesafe",
+      "model": "jev-latest",
+      "cost_usd": 0.00002411,
+      "is_estimate": true,
+      "shot_id": null,
+      "attempt": null
+    },
+    {
+      "stage": "preflight_script",
+      "provider": "typesafe",
+      "model": "jev-latest",
+      "cost_usd": 0.00001399,
+      "is_estimate": true,
+      "shot_id": null,
+      "attempt": null
+    },
+    {
+      "stage": "generate_video",
+      "provider": "openrouter",
+      "model": "bytedance/seedance-2.5",
+      "cost_usd": 1.0323,
+      "is_estimate": false,
+      "shot_id": 1,
+      "attempt": 1
+    },
+    {
+      "stage": "verify_speech",
+      "provider": "openrouter",
+      "model": "openai/whisper-large-v3",
+      "cost_usd": 0.000076,
+      "is_estimate": false,
+      "shot_id": 1,
+      "attempt": 1
+    }
+  ],
+  "cost_usd_total": 1.04239423,
+  "cost_summary": {
+    "total_usd": 1.042394,
+    "actual_usd": 1.042334,
+    "estimated_usd": 0.00006,
+    "by_provider": {
+      "openrouter": 1.042334,
+      "typesafe": 0.00006
+    },
+    "by_model": {
+      "anthropic/claude-sonnet-5.5": 0.009958,
+      "bytedance/seedance-2.5": 1.0323,
+      "jev-latest": 0.00006,
+      "openai/whisper-large-v3": 0.000076
+    },
+    "by_stage": {
+      "generate_video": 1.0323,
+      "preflight_script": 0.00006,
+      "verify_speech": 0.000076,
+      "write_script": 0.009958
+    },
+    "by_cycle": [
+      {
+        "shot_id": 1,
+        "attempt": 1,
+        "cost_usd": 1.032376,
+        "calls": 2
+      }
+    ]
+  },
+  "final": {
+    "path": "runs/20261022-200844-74ae58/final.mp4",
+    "duration_s": 10.1,
+    "width": 480,
+    "height": 854,
+    "fps": 24.0,
+    "has_audio": true
+  }
+}

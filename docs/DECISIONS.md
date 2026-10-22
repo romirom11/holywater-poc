@@ -27,8 +27,8 @@ the flow body, which decides (ADR-010, DATA_FLOW §6).
 - The Prefect logger and structlog must be deliberately merged into one stream (ARCHITECTURE §6).
 - Shots are generated one after another in the flow body, not as parallel tasks. A deliberate cut:
   attempt numbering, cost attribution and the shot-length fixes (TTS fitting, final extension)
-  depend on the other shot and stay simple when sequential. The price is wall time: the real run
-  spent 150 s + 160 s in `generate_video`.
+  depend on the other shot and stay simple when sequential. The price is wall time: the first real
+  run (two shots) spent 150 s + 160 s in `generate_video`; the second (one 10 s shot) spent 157 s.
 
 ---
 
@@ -55,8 +55,9 @@ fails WER in more than ~50% of cases — we flip the default to `tts_overlay` wi
 **Risks.**
 - Cost. Seedance 2.5 via OpenRouter (the default) ≈ $0.1035 per second at 480p (measured: $0.6211 for
   a 6 s clip) and ≈ $0.233/s at 720p (from the published token price, about 2.25× the 480p rate).
-  The one real run (2 × 6 s shots, 480p, no retries) cost **$1.26** in total: video $1.24, LLM
-  $0.017, STT $0.00015. Every regenerated shot adds its own cost again (≈ $0.62 per 6 s shot at
+  The first real run (2 × 6 s shots, 480p, no retries) cost **$1.26** in total: video $1.24, LLM
+  $0.017, STT $0.00015; the second (1 × 10 s shot) cost **$1.04**: video $1.03, LLM $0.010,
+  STT $0.00008, Jev $0.00006 (estimate). Every regenerated shot adds its own cost again (≈ $0.62 per 6 s shot at
   480p). On fal the same model is ≈ $0.22/s (480p) and $0.47/s (720p). Mitigation: 480p by default,
   attempt limits in config, every charge recorded (`costs`, `hw costs <run_id>`).
 - Language: Ukrainian native speech is still untested against the real model (only the dry-run eval

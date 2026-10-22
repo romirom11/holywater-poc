@@ -18,7 +18,7 @@ so each step is testable without paid calls until the very end.
 | 10 | Real vendors: `providers/fal.py`, `providers/openrouter.py`, `providers/typesafe.py` + `registry.py` | error mapping covered by unit tests with mock responses; manual smoke at 480p; the pipeline works without `TYPESAFE_API_KEY` (NoopJudge) | partially: code, error maps and request bodies are unit-tested over mock transports; real 480p runs are only the ones listed under "Samples" in the README (the first at commit `aebdfc2`) |
 | 11 | `cli.py`: `generate`, `eval`, `inspect` (+ `costs`) | `hw generate --dry-run` → `final.mp4` from fake clips | done |
 | 12 | `report.json` + `evals/cases.yaml` + `hw eval compare` | compare prints a table for two dry-run tags | done |
-| 13 | Real runs: 480p dev → 720p final 2 samples | 2 videos in `samples/`, reports saved as baseline | partially: 480p samples only (README "Samples": the first from `aebdfc2`, the second from the current code); 720p samples and committed baseline reports were dropped to save money |
+| 13 | Real runs: 480p dev → 720p final 2 samples | 2 videos in `samples/`, reports saved as baseline | partially: 480p samples only (README "Samples": the first from `aebdfc2`, the second from `f0d289e` with its `report.json` and `script.json`); 720p samples were dropped to save money |
 | 14 | README for a reviewer | a reviewer can install, dry-run, run and read the results without a call | done |
 
 Steps 1–9 and 11–12 spend no money. The first paid call is step 10.

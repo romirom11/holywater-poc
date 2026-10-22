@@ -132,13 +132,14 @@ uv run hw generate '<same idea>' --run-id <id>   # resume: reuses the script and
 | File | Idea → line | Format | Result | Cost | Made by |
 |------|-------------|--------|--------|------|---------|
 | [`samples/smoke-480p-taxi.mp4`](samples/smoke-480p-taxi.mp4) | `Rainy night. A taxi driver glances in the rearview mirror and asks: "Are you sure this is the address?"` → `Are you sure this is the address?` | 480×854, 12.3 s, 2 × 6 s shots (AAC at 96 kHz, before the 48 kHz fix) | native speech, WER 0.0, no retries, Jev pre-flight ran | $1.26 (video $1.24, LLM $0.017, STT $0.00015); 5.4 min | an earlier revision, commit `aebdfc2` |
-| `samples/hire-roman-480p.*` | `In a glass meeting room, … She says: "Cancel the other interviews, Roman gets the job."` → `Cancel the other interviews, Roman gets the job.` | **PLACEHOLDER — to be filled after the real run** | **TBD** | **TBD** | the current code |
+| [`samples/hire-roman-480p.mp4`](samples/hire-roman-480p.mp4) ([report](samples/hire-roman-480p.report.json), [script](samples/hire-roman-480p.script.json)) | `In a glass meeting room, … She says: "Cancel the other interviews, Roman gets the job."` → `Cancel the other interviews, Roman gets the job.` | 480×854, 10.1 s, 1 × 10 s shot, AAC 48 kHz stereo | native speech, WER 0.0, no retries, Jev pre-flight ran, 0 warnings | $1.04 (video $1.03, LLM $0.010, STT $0.00008, Jev $0.00006 est.); 2.8 min | commit `f0d289e` |
 
-Before the run behind the second sample, the current code was exercised end to end only with fakes
-and with the real vendor classes over mock transports. That replay of the default native path sent
-the same request bodies as the earlier real run, except for the intended changes: the fixed `polling_url` handling, the `scriptwriter@3`
-system prompt, one more required `voice_gender` field in the script JSON schema, and one extra STT
-call per speechless clip (the stray-speech check).
+The second sample is the first real run of the current code (clean tree, so `report.json` names
+`git_sha: f0d289e`). Before it, the code had been exercised only with fakes and with the real vendor
+classes over mock transports; that replay sent the same request bodies as the earlier real run
+except for the intended changes (the fixed `polling_url` handling, the `scriptwriter@3` system
+prompt, the required `voice_gender` field in the script JSON schema, and an STT stray-speech check
+per speechless clip). The LLM chose one 10 s shot, so this run had no speechless clip.
 
 ## How it stays reliable
 
@@ -176,12 +177,13 @@ starting (`--yes` skips the question). So far the suite has run only in dry-run.
 
 ## Costs
 
-Measured on the default path (OpenRouter, 480p): **about $1.26 for a 2-shot run** with no retries —
-Seedance 2.5 at ≈ $0.1035 per second ($0.62 per 6 s shot), the LLM ≈ $0.02, STT ≈ $0.00015 per check,
-Jev ≈ $0.00003 per run (an estimate: 5 calls × ~150 input tokens × $0.042/M; the measured run predates
-Jev cost rows). Every regenerated or fallback clip adds about $0.62 per 6 s; 720p costs about
-2.25× per second (`video.resolution: 720p`). The one real run took 5.4 minutes, mostly waiting for
-the video model. `hw costs <run_id>` shows where the money went.
+Measured on the default path (OpenRouter, 480p), both runs with no retries: **$1.26 for 2 × 6 s
+shots** and **$1.04 for 1 × 10 s shot**. Seedance 2.5 costs ≈ $0.103 per second ($0.62 per 6 s,
+$1.03 per 10 s) and is almost the whole bill; the LLM ≈ $0.01–0.02, STT ≈ $0.0001 per check, Jev
+≈ $0.00006 per run (an estimate: input tokens × $0.042/M from the price list; the API reports
+tokens, not a charge). Every regenerated or fallback clip adds its video cost again; 720p costs
+about 2.25× per second (`video.resolution: 720p`). The real runs took 5.4 and 2.8 minutes, mostly waiting for the video
+model. `hw costs <run_id>` shows where the money went.
 
 ## How it was built with agents
 
