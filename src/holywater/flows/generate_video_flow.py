@@ -215,12 +215,18 @@ def generate_video_flow(
         report_path = _write_report(ctx, script, final)
         run = deps.repo.get_run(run_id)
         assert run is not None and ctx.strategy_used is not None
+        breakdown = deps.repo.cost_breakdown(run_id)
         log.info(
             "run.done",
             final=str(final.path),
             duration_s=round(final.duration_s, 2),
             strategy_used=ctx.strategy_used.value,
             cost_usd=round(run.cost_usd_total, 4),
+            cost_actual_usd=breakdown.actual_usd,
+            cost_estimated_usd=breakdown.estimated_usd,
+            cost_by_provider=breakdown.by_provider,
+            cost_by_model=breakdown.by_model,
+            cost_by_cycle={f"shot{c.shot_id}/a{c.attempt}": c.cost_usd for c in breakdown.by_cycle},
         )
         return RunOutcome(
             run_id=run_id,
@@ -244,14 +250,14 @@ def _stage_script(ctx: RunContext) -> Script:
                 "write_stage.ScriptResult",
                 _with_retries(t_write_script, cfg)(ctx.idea, ctx.deps, feedback),
             )
-            repo.add_cost(
-                ctx.run_id,
+            _record_cost(
+                ctx,
                 stage=StageName.WRITE_SCRIPT,
-                provider="openrouter",
+                provider=cfg.llm.provider,
                 model=result.model,
                 units=result.input_tokens + result.output_tokens,
-                unit_price=0.0,
                 cost_usd=result.cost_usd,
+                is_estimate=result.cost_is_estimate,
             )
             script = result.script
             pre = _stage_preflight(ctx, script)
@@ -305,14 +311,15 @@ def _stage_audio(ctx: RunContext, script: Script) -> AudioArtifact:
                 script, ctx.deps, ctx.paths.audio_line(script.dialogue.shot_id)
             ),
         )
-        ctx.repo.add_cost(
-            ctx.run_id,
+        _record_cost(
+            ctx,
             stage=StageName.GENERATE_AUDIO,
-            provider="fal",
+            provider=ctx.config.audio.tts.provider,
             model=audio.model,
             units=len(audio.text),
-            unit_price=0.0,
             cost_usd=audio.cost_usd,
+            is_estimate=audio.cost_is_estimate,
+            shot_id=audio.shot_id,
         )
     ctx.line_audio = audio
     return audio
@@ -382,14 +389,16 @@ def _generate_attempt(
         ),
     )
     row = ctx.repo.add_shot_attempt(ctx.run_id, artifact)
-    ctx.repo.add_cost(
-        ctx.run_id,
+    _record_cost(
+        ctx,
         stage=StageName.GENERATE_VIDEO,
-        provider="fal",
+        provider=ctx.config.video.provider,
         model=artifact.model,
         units=artifact.duration_s,
-        unit_price=0.0,
         cost_usd=artifact.cost_usd,
+        is_estimate=artifact.cost_is_estimate,
+        shot_id=shot.id,
+        attempt=attempt,
     )
     assert row.id is not None
     ctx.shot_attempt_ids[(shot.id, attempt)] = row.id
@@ -419,14 +428,16 @@ def _verify_attempt(ctx: RunContext, script: Script, artifact: VideoArtifact) ->
             return _Verdict(passed=False, verified=False, kind=FailureKind.UNKNOWN)
         v = result.verification
         ctx.repo.add_speech_verification(ctx.run_id, attempt_id, v)
-        ctx.repo.add_cost(
-            ctx.run_id,
+        _record_cost(
+            ctx,
             stage=StageName.VERIFY_SPEECH,
-            provider="fal",
+            provider=ctx.config.audio.stt.provider,
             model=v.stt_model or "stt",
             units=artifact.duration_s,
-            unit_price=0.0,
             cost_usd=result.cost_usd,
+            is_estimate=v.cost_is_estimate,
+            shot_id=artifact.shot_id,
+            attempt=artifact.attempt,
         )
         if result.decision is not None:
             ctx.repo.add_judge_decision(
@@ -483,6 +494,45 @@ def _write_report(ctx: RunContext, script: Script | None, final: FinalVideo | No
 
 
 # -- helpers ----------------------------------------------------------------------------------
+
+
+def _record_cost(
+    ctx: RunContext,
+    *,
+    stage: StageName,
+    provider: str,
+    model: str,
+    units: float,
+    cost_usd: float,
+    is_estimate: bool,
+    shot_id: int | None = None,
+    attempt: int | None = None,
+) -> None:
+    """Persist one provider call's cost and log it with the running total (one event per spend)."""
+    ctx.repo.add_cost(
+        ctx.run_id,
+        stage=stage,
+        provider=provider,
+        model=model,
+        units=units,
+        unit_price=0.0,
+        cost_usd=cost_usd,
+        is_estimate=is_estimate,
+        shot_id=shot_id,
+        attempt=attempt,
+    )
+    run = ctx.repo.get_run(ctx.run_id)
+    log.info(
+        "cost.recorded",
+        provider=provider,
+        model=model,
+        shot_id=shot_id,
+        attempt=attempt,
+        units=round(units, 3),
+        cost_usd=round(cost_usd, 6),
+        estimate=is_estimate,
+        run_total_usd=round(run.cost_usd_total, 6) if run else None,
+    )
 
 
 class _stage:  # noqa: N801 - context manager used like a function

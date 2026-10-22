@@ -167,6 +167,7 @@ class OpenRouterProvider:
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             cost_usd=cost,
+            cost_is_estimate="cost" not in extra,
             raw_text=content,
         )
 
@@ -202,6 +203,7 @@ class OpenRouterProvider:
             seed=request.seed,
             request_id=str(final.get("generation_id") or job_id),
             cost_usd=round(cost, 4),
+            cost_is_estimate=not _has_usage_cost(final),
         )
 
     def _poll_video(self, job_id: str, *, model: str) -> dict[str, Any]:
@@ -267,6 +269,7 @@ class OpenRouterProvider:
             model=request.model,
             language=result.get("language") or request.language,
             cost_usd=_usage_cost(result),
+            cost_is_estimate=not _has_usage_cost(result),
         )
 
     # -- shared internals --------------------------------------------------------------------
@@ -350,6 +353,11 @@ def _error_message(resp: httpx.Response) -> str:
     if isinstance(error, dict):
         return str(error.get("message") or error)[:500]
     return str(payload)[:300]
+
+
+def _has_usage_cost(payload: dict[str, Any]) -> bool:
+    usage = payload.get("usage")
+    return isinstance(usage, dict) and usage.get("cost") is not None
 
 
 def _usage_cost(payload: dict[str, Any]) -> float:

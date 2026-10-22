@@ -139,6 +139,7 @@ def generate_shot(
         provider_request_id=result.request_id,
         model=result.model,
         cost_usd=result.cost_usd,
+        cost_is_estimate=result.cost_is_estimate,
     )
 
 

@@ -38,6 +38,32 @@ class CostLine(BaseModel):
     provider: str
     model: str
     cost_usd: float
+    is_estimate: bool = True
+    shot_id: int | None = None
+    attempt: int | None = None
+
+
+class CycleCostMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_id: int
+    attempt: int
+    cost_usd: float
+    calls: int
+
+
+class CostSummary(BaseModel):
+    """Where the money went: vendor-reported vs estimated; by provider, model, stage, cycle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_usd: float
+    actual_usd: float
+    estimated_usd: float
+    by_provider: dict[str, float] = Field(default_factory=dict)
+    by_model: dict[str, float] = Field(default_factory=dict)
+    by_stage: dict[str, float] = Field(default_factory=dict)
+    by_cycle: list[CycleCostMetrics] = Field(default_factory=list)
 
 
 class FinalMetrics(BaseModel):
@@ -80,4 +106,5 @@ class RunReport(BaseModel):
     preflight_rewrites: int = 0
     costs: list[CostLine] = Field(default_factory=list)
     cost_usd_total: float = 0.0
+    cost_summary: CostSummary | None = None
     final: FinalMetrics | None = None

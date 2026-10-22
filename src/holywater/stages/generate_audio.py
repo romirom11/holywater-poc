@@ -48,4 +48,5 @@ def generate_line_audio(script: Script, deps: AudioDeps, *, dest: Path) -> Audio
         voice=deps.config.voice,
         text=d.text,
         cost_usd=result.cost_usd,
+        cost_is_estimate=result.cost_is_estimate,
     )

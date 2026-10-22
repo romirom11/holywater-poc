@@ -32,6 +32,7 @@ class ScriptResult:
     model: str
     prompt_version: str
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
     input_tokens: int = 0
     output_tokens: int = 0
 
@@ -42,6 +43,7 @@ def write_script(
     """Ask the LLM for a script; feed validation errors back until it fits or attempts run out."""
     pending = list(feedback or [])
     total_cost = 0.0
+    any_estimate = False
     tokens_in = tokens_out = 0
     for attempt in range(1, deps.config.max_attempts + 1):
         user = deps.prompt.render(
@@ -61,6 +63,7 @@ def write_script(
             log.warning("write_script.invalid_output", attempt=attempt, error=str(exc)[:500])
             continue
         total_cost += result.cost_usd
+        any_estimate = any_estimate or result.cost_is_estimate
         tokens_in += result.input_tokens
         tokens_out += result.output_tokens
 
@@ -79,6 +82,7 @@ def write_script(
                 model=result.model,
                 prompt_version=deps.prompt.version_tag,
                 cost_usd=total_cost,
+                cost_is_estimate=any_estimate,
                 input_tokens=tokens_in,
                 output_tokens=tokens_out,
             )

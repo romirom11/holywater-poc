@@ -19,6 +19,7 @@ class AudioArtifact(BaseModel):
     voice: str | None = None
     text: str
     cost_usd: float = Field(ge=0, default=0.0)
+    cost_is_estimate: bool = True
 
 
 class VideoArtifact(BaseModel):
@@ -38,6 +39,7 @@ class VideoArtifact(BaseModel):
     provider_request_id: str | None = None
     model: str
     cost_usd: float = Field(ge=0, default=0.0)
+    cost_is_estimate: bool = True
 
 
 class SpeechVerification(BaseModel):
@@ -55,6 +57,7 @@ class SpeechVerification(BaseModel):
     stt_model: str | None = None
     failure_kind: FailureKind | None = None
     cost_usd: float = Field(ge=0, default=0.0)
+    cost_is_estimate: bool = True
 
 
 class FinalVideo(BaseModel):

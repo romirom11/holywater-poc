@@ -28,6 +28,7 @@ class LLMResult[T: BaseModel]:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
     raw_text: str = ""
 
 
@@ -69,6 +70,7 @@ class VideoResult:
     seed: int | None = None
     request_id: str | None = None
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
 
 
 @runtime_checkable
@@ -94,6 +96,7 @@ class TTSResult:
     path: Path
     model: str
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
 
 
 @runtime_checkable
@@ -116,6 +119,7 @@ class STTResult:
     model: str
     language: str | None = None
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
 
 
 @runtime_checkable
@@ -135,6 +139,7 @@ class LipsyncResult:
     path: Path
     model: str
     cost_usd: float = 0.0
+    cost_is_estimate: bool = True
 
 
 @runtime_checkable

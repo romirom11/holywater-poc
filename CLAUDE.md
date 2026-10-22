@@ -74,8 +74,10 @@ change to stages, flow, storage or media.
   fields, not f-strings. Bind run context with `log_context(...)`, not by passing `run_id` around.
 - Tests: `tests/unit` must not touch network or ffmpeg; `tests/integration` may use ffmpeg and
   the Prefect test harness but never real providers.
-- Costs: every provider call records a `costs` row via `repo.add_cost` (estimate is fine, 0 is
-  acceptable only for fakes).
+- Costs: every provider call goes through `flows._record_cost` → one `costs` row (provider from
+  config, `shot_id`/`attempt` when it belongs to a cycle, `is_estimate` from the vendor result) and
+  one `cost.recorded` log event. Vendor results set `cost_is_estimate=False` only when the API
+  reported the charge. 0 is acceptable only for fakes.
 
 ## Spending real money
 

@@ -149,3 +149,41 @@ def eval_compare(
     engine = make_engine(cfg.storage.db_path)
     init_db(engine)
     typer.echo(compare_table(RunRepository(engine), tags))
+
+
+@app.command()
+def costs(
+    run_id: Annotated[str, typer.Argument(help="Run id to break down.")],
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+) -> None:
+    """Where the money went for one run: by provider, model, stage and generation cycle."""
+    from holywater.config import load_config
+    from holywater.storage import RunRepository, init_db, make_engine
+
+    cfg = load_config(config)
+    engine = make_engine(cfg.storage.db_path)
+    init_db(engine)
+    repo = RunRepository(engine)
+    if repo.get_run(run_id) is None:
+        typer.secho(f"unknown run {run_id}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    b = repo.cost_breakdown(run_id)
+    typer.echo(f"run {run_id}")
+    typer.echo(
+        f"total ${b.total_usd:.4f}  (vendor-reported ${b.actual_usd:.4f}, "
+        f"estimated ${b.estimated_usd:.4f})"
+    )
+    for title, table in (
+        ("by provider", b.by_provider),
+        ("by model", b.by_model),
+        ("by stage", b.by_stage),
+    ):
+        typer.echo(f"\n{title}")
+        for name, amount in table.items():
+            typer.echo(f"  {name:<48} ${amount:.4f}")
+    if b.by_cycle:
+        typer.echo("\nby cycle (shot/attempt)")
+        for c in b.by_cycle:
+            typer.echo(
+                f"  shot {c.shot_id} attempt {c.attempt:<3} ${c.cost_usd:.4f}  ({c.calls} calls)"
+            )

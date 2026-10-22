@@ -187,7 +187,7 @@ Two states, two owners (ADR-006):
 | `shot_attempts` | `shot_id`, `attempt`, `strategy`, `prompt_version`, `prompt_text`, `seed`, `provider_request_id`, `path`, `duration_s`, `resolution`, `cost_usd`, `status` |
 | `speech_verifications` | `shot_attempt_id`, `expected`, `transcript`, `wer`, `passed`, `stt_model`, `failure_kind` |
 | `judge_decisions` | `run_id`, `stage`, `question`, `answer`, `probabilities_json`, `model_version`, `latency_ms` |
-| `costs` | `run_id`, `stage`, `provider`, `model`, `units`, `unit_price`, `cost_usd` |
+| `costs` | `run_id`, `stage`, `provider`, `model`, `units`, `unit_price`, `cost_usd`, `is_estimate`, `shot_id`, `attempt` — one row per provider call; `repo.cost_breakdown()` aggregates by provider/model/stage/cycle |
 
 - All writes go through `RunRepository`; stages know nothing about SQL. Each stage status change is its own transaction.
 - Media — on disk (`runs/<run_id>/video/...`); the DB holds only paths + size + sha256.

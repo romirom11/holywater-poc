@@ -9,6 +9,8 @@ from holywater.domain.artifacts import FinalVideo
 from holywater.domain.enums import RunStatus, StageName
 from holywater.domain.report import (
     CostLine,
+    CostSummary,
+    CycleCostMetrics,
     FinalMetrics,
     RunReport,
     ShotMetrics,
@@ -82,6 +84,7 @@ def build_report(
         for s in stages
     ]
     prompt_versions = sorted({a.prompt_version for a in attempts})
+    breakdown = repo.cost_breakdown(run_id)
     report = RunReport(
         run_id=run.id,
         tag=run.tag,
@@ -114,10 +117,32 @@ def build_report(
         judge_decisions=len(repo.get_judge_decisions(run_id)),
         preflight_rewrites=preflight_rewrites,
         costs=[
-            CostLine(stage=c.stage, provider=c.provider, model=c.model, cost_usd=c.cost_usd)
+            CostLine(
+                stage=c.stage,
+                provider=c.provider,
+                model=c.model,
+                cost_usd=c.cost_usd,
+                is_estimate=c.is_estimate,
+                shot_id=c.shot_id,
+                attempt=c.attempt,
+            )
             for c in repo.get_costs(run_id)
         ],
         cost_usd_total=run.cost_usd_total,
+        cost_summary=CostSummary(
+            total_usd=breakdown.total_usd,
+            actual_usd=breakdown.actual_usd,
+            estimated_usd=breakdown.estimated_usd,
+            by_provider=breakdown.by_provider,
+            by_model=breakdown.by_model,
+            by_stage=breakdown.by_stage,
+            by_cycle=[
+                CycleCostMetrics(
+                    shot_id=c.shot_id, attempt=c.attempt, cost_usd=c.cost_usd, calls=c.calls
+                )
+                for c in breakdown.by_cycle
+            ],
+        ),
         final=(
             FinalMetrics(
                 path=str(final.path),
@@ -142,6 +167,7 @@ def write_report(report: RunReport, path: Path) -> Path:
         path=str(path),
         success=report.success,
         cost_usd=round(report.cost_usd_total, 4),
+        cost_by_provider=report.cost_summary.by_provider if report.cost_summary else {},
         latency_s=report.latency_s,
     )
     return path

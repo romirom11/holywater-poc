@@ -209,3 +209,65 @@ def test_in_memory_engine_works() -> None:
     repo = RunRepository(engine)
     run_id = _new_run(repo)
     assert repo.get_run(run_id) is not None
+
+
+def test_cost_breakdown_by_provider_model_stage_and_cycle(repo: RunRepository) -> None:
+    run_id = _new_run(repo)
+    add = repo.add_cost
+    add(
+        run_id,
+        stage=StageName.WRITE_SCRIPT,
+        provider="openrouter",
+        model="llm",
+        units=1,
+        unit_price=0,
+        cost_usd=0.01,
+        is_estimate=False,
+    )
+    add(
+        run_id,
+        stage=StageName.GENERATE_VIDEO,
+        provider="openrouter",
+        model="seedance",
+        units=8,
+        unit_price=0,
+        cost_usd=1.5,
+        is_estimate=False,
+        shot_id=1,
+        attempt=1,
+    )
+    add(
+        run_id,
+        stage=StageName.VERIFY_SPEECH,
+        provider="fal",
+        model="whisper",
+        units=8,
+        unit_price=0,
+        cost_usd=0.01,
+        is_estimate=True,
+        shot_id=1,
+        attempt=1,
+    )
+    add(
+        run_id,
+        stage=StageName.GENERATE_VIDEO,
+        provider="openrouter",
+        model="seedance",
+        units=8,
+        unit_price=0,
+        cost_usd=1.6,
+        is_estimate=False,
+        shot_id=1,
+        attempt=2,
+    )
+    b = repo.cost_breakdown(run_id)
+    assert b.total_usd == pytest.approx(3.12)
+    assert b.actual_usd == pytest.approx(3.11) and b.estimated_usd == pytest.approx(0.01)
+    assert b.by_provider == {"fal": 0.01, "openrouter": pytest.approx(3.11)}
+    assert b.by_model["seedance"] == pytest.approx(3.1)
+    assert b.by_stage["generate_video"] == pytest.approx(3.1)
+    assert [(c.shot_id, c.attempt, c.calls) for c in b.by_cycle] == [(1, 1, 2), (1, 2, 1)]
+    assert b.by_cycle[0].cost_usd == pytest.approx(1.51)
+    run = repo.get_run(run_id)
+    assert run is not None and run.cost_usd_total == pytest.approx(3.12)
+    assert repo.tag_stats("none").mean_cost_by_provider == {}

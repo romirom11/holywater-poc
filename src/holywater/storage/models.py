@@ -124,4 +124,7 @@ class Cost(SQLModel, table=True):
     units: float
     unit_price: float
     cost_usd: float
+    is_estimate: bool = True
+    shot_id: int | None = None
+    attempt: int | None = None
     created_at: datetime = Field(default_factory=_now)

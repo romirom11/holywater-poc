@@ -103,6 +103,7 @@ def verify_speech(
         stt_model=stt.model,
         failure_kind=failure_kind,
         cost_usd=stt.cost_usd,
+        cost_is_estimate=stt.cost_is_estimate,
     )
     return VerifyResult(verification=verification, decision=decision, cost_usd=stt.cost_usd)
 

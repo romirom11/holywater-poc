@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,6 +42,28 @@ class TagStats:
     p95_wer: float | None
     fallback_rate: float
     mean_duration_s: float | None
+    mean_cost_by_provider: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CycleCost:
+    """Money spent on one generation cycle (shot attempt), across all its provider calls."""
+
+    shot_id: int
+    attempt: int
+    cost_usd: float
+    calls: int
+
+
+@dataclass(frozen=True)
+class CostBreakdown:
+    total_usd: float
+    actual_usd: float
+    estimated_usd: float
+    by_provider: dict[str, float]
+    by_model: dict[str, float]
+    by_stage: dict[str, float]
+    by_cycle: list[CycleCost]
 
 
 class RunRepository:
@@ -329,6 +351,9 @@ class RunRepository:
         units: float,
         unit_price: float,
         cost_usd: float | None = None,
+        is_estimate: bool = True,
+        shot_id: int | None = None,
+        attempt: int | None = None,
     ) -> Cost:
         """Record a cost line and bump the run total in the same transaction."""
         amount = cost_usd if cost_usd is not None else units * unit_price
@@ -340,6 +365,9 @@ class RunRepository:
             units=units,
             unit_price=unit_price,
             cost_usd=amount,
+            is_estimate=is_estimate,
+            shot_id=shot_id,
+            attempt=attempt,
         )
         with self._session() as s:
             run = self._require_run(s, run_id)
@@ -352,6 +380,10 @@ class RunRepository:
     def get_costs(self, run_id: str) -> list[Cost]:
         with self._session() as s:
             return list(s.exec(select(Cost).where(Cost.run_id == run_id).order_by(col(Cost.id))))
+
+    def cost_breakdown(self, run_id: str) -> CostBreakdown:
+        """Totals by provider, model, stage and generation cycle for one run."""
+        return _breakdown(self.get_costs(run_id))
 
     # -- aggregates ----------------------------------------------------------------------------
 
@@ -374,8 +406,11 @@ class RunRepository:
         ]
         wers: list[float] = []
         durations: list[float] = []
+        by_provider: dict[str, float] = {}
         with self._session() as s:
             for run in runs:
+                for provider, amount in self.cost_breakdown(run.id).by_provider.items():
+                    by_provider[provider] = by_provider.get(provider, 0.0) + amount
                 finals = self.get_final_attempts(run.id)
                 for attempt in finals:
                     if attempt.duration_s is not None:
@@ -397,6 +432,7 @@ class RunRepository:
             p95_wer=_percentile(wers, 0.95) if wers else None,
             fallback_rate=len(fallbacks) / len(runs),
             mean_duration_s=statistics.fmean(durations) if durations else None,
+            mean_cost_by_provider={k: v / len(runs) for k, v in sorted(by_provider.items())},
         )
 
     # -- helpers -------------------------------------------------------------------------------
@@ -419,6 +455,36 @@ def _serialize_error(error: BaseException) -> tuple[str, str]:
         error.to_dict() if isinstance(error, PipelineError) else {"message": str(error)}
     )
     return type(error).__name__, json.dumps(payload, default=str)
+
+
+def _breakdown(rows: list[Cost]) -> CostBreakdown:
+    by_provider: dict[str, float] = {}
+    by_model: dict[str, float] = {}
+    by_stage: dict[str, float] = {}
+    cycles: dict[tuple[int, int], list[float]] = {}
+    actual = estimated = 0.0
+    for c in rows:
+        by_provider[c.provider] = by_provider.get(c.provider, 0.0) + c.cost_usd
+        by_model[c.model] = by_model.get(c.model, 0.0) + c.cost_usd
+        by_stage[c.stage] = by_stage.get(c.stage, 0.0) + c.cost_usd
+        if c.is_estimate:
+            estimated += c.cost_usd
+        else:
+            actual += c.cost_usd
+        if c.shot_id is not None and c.attempt is not None:
+            cycles.setdefault((c.shot_id, c.attempt), []).append(c.cost_usd)
+    return CostBreakdown(
+        total_usd=round(actual + estimated, 6),
+        actual_usd=round(actual, 6),
+        estimated_usd=round(estimated, 6),
+        by_provider={k: round(v, 6) for k, v in sorted(by_provider.items())},
+        by_model={k: round(v, 6) for k, v in sorted(by_model.items())},
+        by_stage={k: round(v, 6) for k, v in sorted(by_stage.items())},
+        by_cycle=[
+            CycleCost(shot_id=k[0], attempt=k[1], cost_usd=round(sum(v), 6), calls=len(v))
+            for k, v in sorted(cycles.items())
+        ],
+    )
 
 
 def _percentile(values: list[float], q: float) -> float:

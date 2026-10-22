@@ -87,12 +87,18 @@ def render_stats(stats: list[TagStats]) -> str:
         ("mean_cost_usd", lambda s: _num(s.mean_cost_usd, 3)),
         ("mean_shot_duration_s", lambda s: _num(s.mean_duration_s, 1)),
     ]
+    for provider in sorted({p for s in stats for p in s.mean_cost_by_provider}):
+        rows.append((f"mean_cost_usd:{provider}", _provider_cost_cell(provider)))
     width = max([len(s.tag) for s in stats] + [10])
     header = f"{'metric':<22}" + "".join(f"{s.tag:>{width + 2}}" for s in stats)
     lines = [header, "-" * len(header)]
     for name, fn in rows:
         lines.append(f"{name:<22}" + "".join(f"{fn(s):>{width + 2}}" for s in stats))
     return "\n".join(lines)
+
+
+def _provider_cost_cell(provider: str) -> Callable[[TagStats], str]:
+    return lambda s: _num(s.mean_cost_by_provider.get(provider), 3)
 
 
 def _pct(value: float) -> str:
