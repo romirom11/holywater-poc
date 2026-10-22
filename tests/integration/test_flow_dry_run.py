@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,6 +11,7 @@ from holywater.domain.enums import AudioStrategy, FailureKind, StageName
 from holywater.flows.generate_video_flow import generate_video_flow
 from holywater.flows.wiring import build_deps
 from holywater.media import FFmpeg
+from holywater.observability.errors import FatalProviderError, PromptRejectedError
 from holywater.providers.fake import FakeJudge, FakeSTT, FakeVideo, fake_idea, paraphrase_first_n
 from holywater.storage import new_run_id
 
@@ -35,13 +37,18 @@ def _deps(config: PipelineConfig) -> object:
     return build_deps(config, Secrets(_env_file=None), dry_run=True)  # type: ignore[call-arg]
 
 
+def _line_checks(verifications: list[Any]) -> list[Any]:
+    """Line verifications only (stray-speech checks on speechless clips have expected="")."""
+    return [v for v in verifications if v.expected]
+
+
 def test_happy_path_native(config: PipelineConfig) -> None:
     deps = _deps(config)
     run_id = new_run_id()
     outcome = generate_video_flow(fake_idea(), deps, run_id=run_id, tag="t")  # type: ignore[arg-type]
 
     assert outcome.final.path.is_file()
-    assert 8 <= outcome.final.duration_s <= 30.5
+    assert 8 <= outcome.final.duration_s <= 30  # assemble trims to max exactly
     assert outcome.final.has_audio and outcome.final.height > outcome.final.width
     assert outcome.strategy_used is AudioStrategy.NATIVE
 
@@ -51,6 +58,9 @@ def test_happy_path_native(config: PipelineConfig) -> None:
     assert report["audio_strategy_used"] == "native"
     assert [s["name"] for s in report["stages"]][:2] == ["write_script", "preflight_script"]
     assert report["judge_decisions"] == 5
+    assert report["models"]["judge"] == "fake/jev-latest"  # the judge that actually answered
+    jev = [c for c in report["costs"] if c["provider"] == "typesafe"]
+    assert len(jev) == 5 and {c["stage"] for c in jev} == {"preflight_script"}  # one per call
     assert report["shots_regenerated"] == 0
     assert report["retries_total"] == 0
     by_name = {s["name"]: s for s in report["stages"]}
@@ -65,6 +75,10 @@ def test_happy_path_native(config: PipelineConfig) -> None:
     stages = {s.name: s.status for s in deps.repo.get_stages(run_id)}  # type: ignore[attr-defined]
     assert stages[StageName.GENERATE_AUDIO.value] == "skipped"  # native strategy: no TTS
     assert stages["assemble"] == "done" and stages["report"] == "done"
+    v = deps.repo.get_speech_verifications(run_id)  # type: ignore[attr-defined]
+    stray = [x for x in v if not x.expected]  # shot 1 was checked for unscripted speech
+    assert len(stray) == 1 and stray[0].passed and stray[0].transcript == ""
+    assert deps.ffmpeg.timeout_s == config.retries.timeouts_s.ffmpeg  # type: ignore[attr-defined]
 
 
 def test_wer_failure_retries_then_falls_back_to_tts(config: PipelineConfig) -> None:
@@ -78,12 +92,12 @@ def test_wer_failure_retries_then_falls_back_to_tts(config: PipelineConfig) -> N
     repo = deps.repo  # type: ignore[attr-defined]
     run = repo.get_run(run_id)
     assert run.audio_strategy_used == "tts_overlay"
-    assert "failed verification" in run.fallback_reason
+    assert run.fallback_reason == "exhausted 2 native attempts (last failure: paraphrased)"
     attempts = repo.get_attempts(run_id, shot_id=2)
     assert [a.strategy for a in attempts] == ["native", "native", "tts_overlay"]
     assert [a.status for a in attempts] == ["failed", "failed", "accepted"]
     assert attempts[1].prompt_version.endswith("/dialogue_strict")
-    verifications = repo.get_speech_verifications(run_id)
+    verifications = _line_checks(repo.get_speech_verifications(run_id))
     assert [v.failure_kind for v in verifications] == ["paraphrased", "paraphrased", None]
     assert verifications[-1].passed and verifications[-1].shot_attempt_id == attempts[2].id
     assert (config.storage.runs_dir / run_id / "audio" / "line_2.mp3").is_file()
@@ -101,6 +115,7 @@ def test_wrong_language_falls_back_immediately(config: PipelineConfig) -> None:
     outcome = generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
     attempts = deps.repo.get_attempts(outcome.run_id, shot_id=2)  # type: ignore[attr-defined]
     assert [a.strategy for a in attempts] == ["native", "tts_overlay"]
+    assert deps.repo.get_run(outcome.run_id).fallback_reason == "wrong_language"  # type: ignore[attr-defined]
 
 
 def test_transient_provider_error_is_retried(config: PipelineConfig) -> None:
@@ -120,12 +135,18 @@ def test_transient_provider_error_is_retried(config: PipelineConfig) -> None:
 
 def test_stt_outage_marks_unverified_and_falls_back(config: PipelineConfig) -> None:
     deps = _deps(config)
-    deps.stt = FakeSTT(fail_times=10)  # type: ignore[attr-defined]
+    deps.stt = FakeSTT(fail_times=99)  # type: ignore[attr-defined]
     outcome = generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
     assert outcome.strategy_used is AudioStrategy.TTS_OVERLAY
-    v = deps.repo.get_speech_verifications(outcome.run_id)  # type: ignore[attr-defined]
+    run = deps.repo.get_run(outcome.run_id)  # type: ignore[attr-defined]
+    assert run.fallback_reason.startswith("stt unavailable")  # not "failed verification"
+    all_v = deps.repo.get_speech_verifications(outcome.run_id)  # type: ignore[attr-defined]
+    v = _line_checks(all_v)
     assert len(v) == 2  # the native clip, then the assembled final: both unverified
     assert all(not x.verified and x.failure_kind == FailureKind.UNKNOWN for x in v)
+    assert len(all_v) == 4 and not any(x.verified for x in all_v)  # + 2 stray checks, unchecked
+    attempts = deps.repo.get_attempts(outcome.run_id, shot_id=2)  # type: ignore[attr-defined]
+    assert [a.status for a in attempts] == ["unverified", "accepted"]  # final kept "accepted"
     report = json.loads(outcome.report_path.read_text())
     assert report["success"] is True and report["line_verified"] is False  # R4 not evidenced
 
@@ -139,7 +160,7 @@ def test_tts_overlay_strategy_from_config(config: PipelineConfig) -> None:
     outcome = generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
     assert outcome.strategy_used is AudioStrategy.TTS_OVERLAY
     assert deps.lipsync is not None and deps.lipsync.calls == 1  # type: ignore[attr-defined]
-    v = deps.repo.get_speech_verifications(outcome.run_id)  # type: ignore[attr-defined]
+    v = _line_checks(deps.repo.get_speech_verifications(outcome.run_id))  # type: ignore[attr-defined]
     assert len(v) == 1 and v[0].passed  # sanity check on the assembled final, not on a clip
     attempts = deps.repo.get_attempts(outcome.run_id, shot_id=2)  # type: ignore[attr-defined]
     assert attempts[0].status == "accepted" and v[0].shot_attempt_id == attempts[0].id
@@ -147,6 +168,9 @@ def test_tts_overlay_strategy_from_config(config: PipelineConfig) -> None:
     assert report["line_verified"] is True
     stages = {s.name: s.status for s in deps.repo.get_stages(outcome.run_id)}  # type: ignore[attr-defined]
     assert stages["generate_audio"] == "done"
+    lipsync = [c for c in report["costs"] if c["stage"] == "assemble"]  # paid inside assemble
+    assert len(lipsync) == 1 and lipsync[0]["provider"] == cfg.audio.lipsync.provider
+    assert (lipsync[0]["shot_id"], lipsync[0]["model"]) == (2, f"fake/{cfg.audio.lipsync.model}")
 
 
 def test_tts_overlay_broken_mux_fails_the_run(config: PipelineConfig) -> None:
@@ -156,7 +180,8 @@ def test_tts_overlay_broken_mux_fails_the_run(config: PipelineConfig) -> None:
     raw["audio"]["strategy"] = "tts_overlay"
     cfg = PipelineConfig.model_validate(raw)
     deps = _deps(cfg)
-    deps.stt = FakeSTT(queue=["something completely different was heard"])  # type: ignore[attr-defined]
+    # Two stray-speech checks hear nothing, then the final check hears the wrong words.
+    deps.stt = FakeSTT(queue=["", "", "something completely different was heard"])  # type: ignore[attr-defined]
     run_id = new_run_id()
     with pytest.raises(QualityGateError, match="does not carry the line"):
         generate_video_flow(fake_idea(), deps, run_id=run_id)  # type: ignore[arg-type]
@@ -207,7 +232,6 @@ def test_clip_duration_gate_regenerates_then_gives_up(config: PipelineConfig) ->
 
 
 def test_rejected_prompt_is_softened_once(config: PipelineConfig) -> None:
-    from holywater.observability.errors import FatalProviderError
 
     deps = _deps(config)
     deps.video = FakeVideo(ffmpeg=deps.ffmpeg, reject_times=1)  # type: ignore[attr-defined]
@@ -221,9 +245,54 @@ def test_rejected_prompt_is_softened_once(config: PipelineConfig) -> None:
 
     deps = _deps(config)
     deps.video = FakeVideo(ffmpeg=deps.ffmpeg, reject_times=2)  # type: ignore[attr-defined]
-    with pytest.raises(FatalProviderError):
+    with pytest.raises(PromptRejectedError):
         generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
     assert deps.llm.calls == 2  # only one softening attempt, then fatal  # type: ignore[attr-defined]
+
+
+def test_other_fatal_video_errors_are_not_softened(config: PipelineConfig) -> None:
+    """An expired/cancelled job or a malformed response is not about the prompt: no LLM rewrite,
+    no second paid video, the run stops with the typed error."""
+    deps = _deps(config)
+    deps.video = FakeVideo(ffmpeg=deps.ffmpeg, expire_times=1)  # type: ignore[attr-defined]
+    run_id = new_run_id()
+    with pytest.raises(FatalProviderError, match="expired") as exc_info:
+        generate_video_flow(fake_idea(), deps, run_id=run_id)  # type: ignore[arg-type]
+    assert not isinstance(exc_info.value, PromptRejectedError)
+    assert deps.llm.calls == 1 and deps.video.calls == 1  # type: ignore[attr-defined]
+    report = json.loads((config.storage.runs_dir / run_id / "report.json").read_text())
+    assert report["failure_type"] == "FatalProviderError"
+
+
+def test_billed_job_without_a_clip_records_its_cost_and_is_regenerated(
+    config: PipelineConfig,
+) -> None:
+    from holywater.observability.errors import BilledJobError
+
+    deps = _deps(config)
+    deps.video = FakeVideo(ffmpeg=deps.ffmpeg, billed_times=1, billed_spent_usd=0.62)  # type: ignore[attr-defined]
+    run_id = new_run_id()
+    outcome = generate_video_flow(fake_idea(), deps, run_id=run_id)  # type: ignore[arg-type]
+    assert deps.video.calls == 3 and deps.llm.calls == 1  # 1 abandoned + 2 shots; not softened  # type: ignore[attr-defined]
+    attempts = deps.repo.get_attempts(run_id, shot_id=1)  # type: ignore[attr-defined]
+    assert (attempts[0].attempt, attempts[0].status, attempts[0].path) == (1, "abandoned", None)
+    assert [a.status for a in attempts] == ["abandoned", "accepted"]
+    report = json.loads(outcome.report_path.read_text())
+    video = [c for c in report["costs"] if c["stage"] == "generate_video" and c["cost_usd"] > 0]
+    assert [(c["shot_id"], c["attempt"]) for c in video] == [(1, 1)]
+    assert video[0]["cost_usd"] == pytest.approx(0.62) and video[0]["is_estimate"] is True
+    assert report["cost_usd_total"] == pytest.approx(0.62) and report["success"] is True
+
+    # Every attempt billed but not collected: the last BilledJobError ends the run.
+    deps = _deps(config)
+    deps.video = FakeVideo(ffmpeg=deps.ffmpeg, billed_times=9, billed_spent_usd=0.62)  # type: ignore[attr-defined]
+    run_id = new_run_id()
+    with pytest.raises(BilledJobError):
+        generate_video_flow(fake_idea(), deps, run_id=run_id)  # type: ignore[arg-type]
+    assert deps.video.calls == config.video.max_attempts  # type: ignore[attr-defined]
+    report = json.loads((config.storage.runs_dir / run_id / "report.json").read_text())
+    assert report["cost_usd_total"] == pytest.approx(0.62 * config.video.max_attempts)
+    assert report["failure_stage"] == "generate_video"
 
 
 def test_truncated_line_widens_the_window_instead_of_strict_prompt(
@@ -250,13 +319,14 @@ def test_truncated_line_widens_the_window_instead_of_strict_prompt(
 
 def test_stt_noise_reruns_stt_without_regenerating_video(config: PipelineConfig) -> None:
     deps = _deps(config)
-    deps.stt = FakeSTT(queue=["are you sure this is the adress"])  # type: ignore[attr-defined]
+    # Shot 1's stray-speech check hears nothing; the dialogue clip is misheard once.
+    deps.stt = FakeSTT(queue=["", "are you sure this is the adress"])  # type: ignore[attr-defined]
     deps.judge = FakeJudge(choice_answers={"failure_kind": "stt_noise"})  # type: ignore[attr-defined]
     run_id = new_run_id()
     outcome = generate_video_flow(fake_idea(), deps, run_id=run_id)  # type: ignore[arg-type]
     assert outcome.strategy_used is AudioStrategy.NATIVE
     assert deps.video.calls == 2  # no extra clip was paid for  # type: ignore[attr-defined]
-    v = deps.repo.get_speech_verifications(run_id)  # type: ignore[attr-defined]
+    v = _line_checks(deps.repo.get_speech_verifications(run_id))  # type: ignore[attr-defined]
     assert [x.passed for x in v] == [False, True] and {x.shot_attempt_id for x in v} == {
         v[0].shot_attempt_id
     }
@@ -324,7 +394,57 @@ def test_resume_reuses_script_and_accepted_shots(config: PipelineConfig) -> None
     assert [a.attempt for a in deps.repo.get_attempts(run_id, shot_id=1)] == [1]  # type: ignore[attr-defined]
     report = json.loads(outcome.report_path.read_text())
     assert report["success"] is True and report["retries_total"] == 2
-    assert len(report["costs"]) == 4  # llm, shot 1, shot 2, stt: nothing paid twice
+    paid = [c for c in report["costs"] if c["provider"] != "typesafe"]
+    assert len(paid) == 5  # llm, shot 1 + its stray check, shot 2 + its STT: nothing paid twice
+    assert len(report["costs"]) - len(paid) == 5  # Jev calls of the first run's pre-flight only
 
     with pytest.raises(ConfigError, match="different idea"):
         generate_video_flow(fake_idea('Other idea: "Hello there"'), deps, run_id=run_id)  # type: ignore[arg-type]
+
+
+def test_report_names_the_judge_that_ran(config: PipelineConfig) -> None:
+    """No key / no SDK / bad key -> NoopJudge: the report must not claim Jev ran or charged."""
+    from holywater.providers.base import NoopJudge
+
+    deps = _deps(config)
+    deps.judge = NoopJudge()  # type: ignore[attr-defined]
+    outcome = generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
+    report = json.loads(outcome.report_path.read_text())
+    assert report["models"]["judge"] == "noop"
+    assert not [c for c in report["costs"] if c["provider"] == "typesafe"]
+
+    raw = config.model_dump(mode="json")
+    raw["judge"]["enabled"] = False
+    cfg = PipelineConfig.model_validate(raw)
+    outcome = generate_video_flow(fake_idea(), _deps(cfg), run_id=new_run_id())  # type: ignore[arg-type]
+    assert json.loads(outcome.report_path.read_text())["models"]["judge"] == "disabled"
+
+
+def test_final_check_window_covers_the_whole_tts_voice(config: PipelineConfig) -> None:
+    """The voice is mixed in at dialogue.start_s; when it runs longer than the script's window,
+    the final STT window must still cover all of it."""
+    from pathlib import Path as _Path
+
+    from structlog.testing import capture_logs
+
+    from holywater.providers.base import TTSRequest, TTSResult
+    from holywater.providers.fake import FakeTTS, write_sidecar
+
+    class _LongTTS(FakeTTS):
+        def synthesize(self, request: TTSRequest, *, dest: _Path) -> TTSResult:
+            self.calls += 1
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            self.ffmpeg.synth_audio(dest, duration_s=4.0)  # script window is only 2.7 s
+            write_sidecar(dest, request.text)
+            return TTSResult(path=dest, model=f"fake/{request.model}")
+
+    raw = config.model_dump(mode="json")
+    raw["audio"]["strategy"] = "tts_overlay"
+    cfg = PipelineConfig.model_validate(raw)
+    deps = _deps(cfg)
+    deps.tts = _LongTTS(ffmpeg=deps.ffmpeg)  # type: ignore[attr-defined]
+    with capture_logs() as logs:
+        outcome = generate_video_flow(fake_idea(), deps, run_id=new_run_id())  # type: ignore[arg-type]
+    assert outcome.final.path.is_file()
+    start = next(e for e in logs if e["event"] == "verify_final.start")
+    assert start["window"][1] == pytest.approx(4.0 + 2 * 0.5)  # voice + margin on each side

@@ -60,6 +60,23 @@ class SpeechVerification(BaseModel):
     cost_is_estimate: bool = True
 
 
+class ProviderCost(BaseModel):
+    """A paid provider call made inside a stage; the flow records each one via `_record_cost`.
+
+    `capability` names the config section the vendor comes from (e.g. "lipsync" ->
+    `audio.lipsync.provider`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    capability: str
+    model: str
+    units: float = Field(ge=0)
+    cost_usd: float = Field(ge=0)
+    is_estimate: bool
+    shot_id: int | None = None
+
+
 class FinalVideo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -71,3 +88,7 @@ class FinalVideo(BaseModel):
     has_audio: bool
     strategy_used: AudioStrategy
     shots: list[VideoArtifact] = Field(min_length=1)
+    provider_costs: list[ProviderCost] = Field(
+        default_factory=list,
+        description="Paid calls made by assemble (lipsync) that are not recorded yet.",
+    )

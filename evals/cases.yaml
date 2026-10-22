@@ -1,5 +1,8 @@
-# Eval set: ideas of varying difficulty for regression runs (`hw eval run --tag <tag>`).
-# Every case has the line in quotes so the verbatim check is unambiguous.
+# Eval set: ideas of varying difficulty for regression runs (`hw eval run --tag <tag> [--dry-run]`).
+# Without --dry-run every case is a paid generation (8 runs; the command asks first).
+# Every case but en_no_quotes has the line in quotes: then the line must be that whole quoted
+# fragment. en_no_quotes checks the other path: the LLM picks a sentence, which must occur verbatim.
+# Case ids become part of the run id, so they use only letters, digits, '.', '_' and '-'.
 cases:
   - id: en_short
     text: 'Rainy night. A taxi driver glances in the mirror and asks: "Are you sure this is the address?"'

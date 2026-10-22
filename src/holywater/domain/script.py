@@ -1,15 +1,19 @@
 """Script produced by the LLM (see docs/DATA_FLOW.md §3).
 
-Self-contained invariants live here as pydantic validators. The cross-check against the input
-text (the line must be a verbatim substring) needs text normalization and lives in
-`quality.script_checks` so that `domain` keeps zero dependencies.
+Only structural invariants live here as pydantic validators (shot count and ids, total duration,
+exactly one dialogue shot, the line window inside that shot). Checks that need text
+normalization or a tunable threshold — the line is verbatim from the input, the window is long
+enough to say it — live in `quality.script_checks`, so `domain` keeps zero dependencies.
 """
 
 from __future__ import annotations
 
-from typing import Self
+import re
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from holywater.domain.enums import VoiceGender
 
 MIN_SHOTS = 1
 MAX_SHOTS = 2
@@ -17,8 +21,24 @@ MIN_SHOT_S = 4
 MAX_SHOT_S = 30
 MIN_TOTAL_S = 8
 MAX_TOTAL_S = 30
-# Conservative speech rate used to check that the line fits its time window.
+# Default speech rate (characters per second) for the "line fits its window" check in
+# `quality.script_checks`; the flow passes the configured value.
 CHARS_PER_SECOND = 15.0
+
+_ISO_639_1 = re.compile(r"[a-z]{2}")
+_LANGUAGE_ALIASES = {"ua": "uk"}  # the country code, a common slip for Ukrainian
+
+
+def language_code(value: str) -> str:
+    """The language as an ISO 639-1 code: lowercased, region dropped ("en-US" -> "en"). It picks
+    the comparison rules and is sent as is to STT and TTS, so anything else (e.g. "English") is a
+    validation error the script writer feeds back to the LLM."""
+    code = value.strip().lower().replace("_", "-").split("-")[0]
+    code = _LANGUAGE_ALIASES.get(code, code)
+    if not _ISO_639_1.fullmatch(code):
+        msg = f"language must be an ISO 639-1 code such as 'en' or 'uk', got {value!r}"
+        raise ValueError(msg)
+    return code
 
 
 class Dialogue(BaseModel):
@@ -31,6 +51,21 @@ class Dialogue(BaseModel):
     emotion: str = Field(min_length=1, description="How the line is delivered.")
     start_s: float = Field(ge=0)
     end_s: float = Field(gt=0)
+    # Required in the JSON schema the LLM fills (strict structured outputs want every key
+    # required); `_default_voice_gender` keeps script.json files written before it loadable.
+    voice_gender: VoiceGender
+
+    @field_validator("language")
+    @classmethod
+    def _language_code(cls, value: str) -> str:
+        return language_code(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_voice_gender(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "voice_gender" not in data:
+            return {**data, "voice_gender": VoiceGender.FEMALE}
+        return data
 
     @model_validator(mode="after")
     def _window_is_positive(self) -> Self:
@@ -42,10 +77,6 @@ class Dialogue(BaseModel):
     @property
     def window_s(self) -> float:
         return self.end_s - self.start_s
-
-    @property
-    def estimated_speech_s(self) -> float:
-        return len(self.text) / CHARS_PER_SECOND
 
 
 class Shot(BaseModel):
@@ -72,6 +103,11 @@ class Script(BaseModel):
     shots: list[Shot] = Field(min_length=MIN_SHOTS, max_length=MAX_SHOTS)
     dialogue: Dialogue
 
+    @field_validator("language")
+    @classmethod
+    def _language_code(cls, value: str) -> str:
+        return language_code(value)
+
     @model_validator(mode="after")
     def _invariants(self) -> Self:
         problems = self.violations()
@@ -80,7 +116,7 @@ class Script(BaseModel):
         return self
 
     def violations(self) -> list[str]:
-        """Human-readable invariant violations; fed back to the LLM on retry."""
+        """Human-readable structural violations; fed back to the LLM on retry."""
         problems: list[str] = []
         ids = [s.id for s in self.shots]
         if ids != list(range(1, len(ids) + 1)):
@@ -100,19 +136,12 @@ class Script(BaseModel):
                 f"dialogue.shot_id={self.dialogue.shot_id} but the dialogue shot is "
                 f"{with_dialogue[0].id}"
             )
-        else:
+        elif self.dialogue.end_s > with_dialogue[0].duration_s:
             shot = with_dialogue[0]
-            if self.dialogue.end_s > shot.duration_s:
-                problems.append(
-                    f"dialogue ends at {self.dialogue.end_s}s but shot {shot.id} lasts "
-                    f"{shot.duration_s}s"
-                )
-            if self.dialogue.window_s < self.dialogue.estimated_speech_s:
-                problems.append(
-                    f"dialogue window {self.dialogue.window_s:.1f}s is shorter than the estimated "
-                    f"speech time {self.dialogue.estimated_speech_s:.1f}s for "
-                    f"{len(self.dialogue.text)} characters"
-                )
+            problems.append(
+                f"dialogue ends at {self.dialogue.end_s}s but shot {shot.id} lasts "
+                f"{shot.duration_s}s"
+            )
         return problems
 
     @property

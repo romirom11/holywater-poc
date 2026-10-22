@@ -2,67 +2,78 @@
 #
 # Each capability picks its vendor with `provider:` (fal | openrouter) and a vendor-specific
 # `model:` id. OpenRouter alone covers LLM, video, TTS and STT with one key; fal adds lipsync.
+# The judge has no `provider:`: TypeSafe Jev is its only vendor (optional, see `judge`).
+# Relative paths (storage.*) resolve against the working directory: run from the repo root.
+# Overview of every section: docs/ARCHITECTURE.md §4; reactions to failures: docs/DATA_FLOW.md §6.
 version: 1
 
 llm:
   provider: openrouter
   model: "anthropic/claude-sonnet-5.5"       # any OpenRouter model id with structured outputs
   temperature: null                            # null = not sent; Claude 5.x endpoints do not accept it
-  max_attempts: 3                              # retries on invalid schema / line-substring violation
+  max_attempts: 3                              # answers per script (schema / line / window check), also pre-flight rounds
 
-judge:                                         # TypeSafe Jev; disabled or no key -> NoopJudge
+judge:                                         # TypeSafe Jev; disabled, blank key or no SDK -> NoopJudge
   enabled: true
   model: "jev-latest"
+  usd_per_m_input_tokens: 0.042                # cost estimate per Jev call (input tokens; output is free)
   preflight:
     enabled: true
-    safety_risk_threshold: 0.7                 # Noul p > threshold -> rewrite prompt before generation
-    min_filmability_score: 3                   # Score 1..5 below -> retry LLM with feedback
-  failure_classifier:
+    safety_risk_threshold: 0.7                 # Noul p > threshold -> the LLM revises the script before any video
+    min_filmability_score: 3                   # Score 1..5 below -> the LLM revises the script with feedback
+  failure_classifier:                          # off / no Jev -> word-count heuristics pick the failure kind
     enabled: true
 
 video:
   provider: openrouter                         # openrouter: bytedance/seedance-2.5 | fal: bytedance/seedance-2.5/text-to-video
   model: "bytedance/seedance-2.5"
-  resolution: "480p"                           # 480p for dev iterations, 720p for final samples
+  resolution: "480p"                           # 480p (~$0.10/s on OpenRouter); 720p is ~2.25x the price
   aspect_ratio: "9:16"
   generate_audio: true
-  max_attempts: 2
+  max_attempts: 2                              # clips per speechless shot (no dialogue, or under a TTS voice)
 
 audio:
   strategy: native                             # native | tts_overlay
-  native_attempts: 2                           # native tries per shot before falling back to TTS
+  native_attempts: 2                           # native clips for the dialogue shot before falling back to TTS
   tts:
     provider: openrouter                       # openrouter: elevenlabs/eleven-v3 | fal: fal-ai/elevenlabs/tts/eleven-v3
     model: "elevenlabs/eleven-v3"
-    voice: "sarah"
+    voice: "sarah"                             # default voice; also the retry when a voice below is rejected
+    voices: {female: "sarah", male: "george"}  # by dialogue.voice_gender; ids from the model's supported_voices
   stt:
     provider: openrouter                       # openrouter: openai/whisper-large-v3 | fal: fal-ai/whisper
     model: "openai/whisper-large-v3"
-    language: auto
+    language: auto                             # auto = the line's language is sent to STT (no detection)
   lipsync:
     provider: fal                              # fal only
-    enabled: false
+    enabled: false                             # tts_overlay only; untested against fal, cost not priced
     model: "fal-ai/sync-lipsync/v2"
 
 quality:
-  max_wer: 0.10
-  duration_s: {min: 8, max: 30}
-  shots: {min: 1, max: 2}
+  max_wer: 0.10                                # after normalization: exact below 10 words, 1 word may differ at 10-19 (ADR-009)
+  duration_s: {min: 8, max: 30}                # final length; must lie within the task's 8..30 s
   shot_duration_tolerance_s: 1.0               # clip length vs requested; outside -> regenerate the shot
   truncated_window_widen_s: 1.0                # `truncated` failure: widen the line window by this on each side
+  speech_chars_per_s: 15.0                     # script check: the line window must hold the line at this rate
+  min_audio_peak_db: -50.0                     # final integrity gate: audio peak below this = silent final
+  final_check_margin_s: 0.5                    # tts_overlay final check: audio kept on each side of the TTS voice
+  stray_speech: {action: warn, max_words: 2}   # STT on clips that must be speechless: warn | regenerate (the clip under a TTS voice always regenerates)
 
 retries:
-  provider: {attempts: 3, backoff_s: [5, 15, 45]}
-  timeouts_s: {llm: 60, video: 600, tts: 60, stt: 120, judge: 10}
+  provider: {attempts: 3, backoff_s: [5, 15]}  # attempts in total; one backoff delay per retry
+  timeouts_s: {llm: 60, video: 600, tts: 60, stt: 120, judge: 10, ffmpeg: 600}   # per vendor call (video: submit..download); ffmpeg: per subprocess
 
 providers:                                     # vendor-wide connection settings
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     video_poll_interval_s: 10
+    download_attempts: 3                       # re-download a finished job (same id) before giving up
+    video_usd_per_s: {480p: 0.1035, 720p: 0.233}   # video.model price: estimate when usage.cost is missing, and the `hw eval run` cost prompt
   fal:
     lipsync_sync_mode: cut_off
+    download_attempts: 3
 
-hitl:                                          # documented HITL points; all disabled in the PoC
+hitl:                                          # documented HITL points; all disabled (true = refuse to start)
   after_script: {enabled: false}
   on_unverified_speech: {enabled: false}
 

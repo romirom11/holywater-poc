@@ -76,7 +76,7 @@ plugins = ["pydantic.mypy"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["fal_client.*", "jiwer.*", "typesafe.*", "num2words.*"]
+module = ["fal_client.*", "jiwer.*", "typesafe_sdk.*", "num2words.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

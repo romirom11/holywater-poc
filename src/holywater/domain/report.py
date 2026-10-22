@@ -14,7 +14,10 @@ class StageMetrics(BaseModel):
     status: str
     entries: int  # times the flow entered the stage (per shot / per shot attempt for shot stages)
     retries: int = 0  # Prefect task retries on transient provider errors inside the stage
-    duration_s: float | None = None  # of the last entry
+    # Wall time summed over all entries. Nested stages are inclusive: generate_video contains its
+    # verify_speech checks, assemble contains a shot extension's generate_video.
+    duration_s: float | None = None
+    last_duration_s: float | None = None  # of the latest entry only
     error_type: str | None = None
 
 
@@ -29,6 +32,8 @@ class ShotMetrics(BaseModel):
     final_wer: float | None
     verified: bool | None
     failure_kinds: list[str] = Field(default_factory=list)
+    # Words heard by the stray-speech check on a shot without dialogue (None: not checked).
+    stray_speech_words: int | None = None
     cost_usd: float = 0.0
 
 
@@ -83,6 +88,7 @@ class RunReport(BaseModel):
 
     run_id: str
     tag: str | None
+    dry_run: bool = False  # fake providers: no vendor was called, numbers are not real
     success: bool
     status: str
     failure_stage: str | None = None
@@ -105,6 +111,7 @@ class RunReport(BaseModel):
     # the STT/WER gate. False when STT was unavailable (`unverified`) even if the run finished.
     line_verified: bool = False
     shots_regenerated: int = 0  # extra generation cycles after a failed quality gate
+    failure_kinds: dict[str, int] = Field(default_factory=dict)  # over all speech checks of the run
     retries_total: int = 0  # sum of stage retries: transient provider failures that were retried
     judge_decisions: int = 0
     preflight_rewrites: int = 0

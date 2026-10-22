@@ -100,3 +100,47 @@ def test_provider_error_keeps_provider_fields() -> None:
     )
     assert err.provider == "openrouter"
     assert err.to_dict()["context"]["status_code"] == 400
+
+
+def test_prefect_records_reach_the_run_log_once(tmp_path: Path) -> None:
+    log_file = tmp_path / "logs.jsonl"
+    prefect_logger = logging.getLogger("prefect")
+    assert prefect_logger.propagate  # Prefect 3.x: `prefect.*` propagates to root
+    with hwlog.run_log_file(log_file):
+        logging.getLogger("prefect.flow_engine").warning("engine warning")
+        hwlog.get_logger("test").info("ours")
+    events = [e["event"] for e in _read_jsonl(log_file)]
+    assert events.count("engine warning") == 1
+    assert events.count("ours") == 1
+
+
+def test_configure_logging_drops_prefects_root_console_handler() -> None:
+    from prefect.logging.handlers import PrefectConsoleHandler
+
+    root = logging.getLogger()
+    prefect_console = PrefectConsoleHandler()
+    other = logging.StreamHandler()  # e.g. a test harness capture: not ours to remove
+    root.addHandler(prefect_console)
+    root.addHandler(other)
+    try:
+        hwlog.configure_logging("INFO", json_console=True)
+        assert prefect_console not in root.handlers
+        assert other in root.handlers
+        assert sum(getattr(h, "_hw_console", False) for h in root.handlers) == 1
+    finally:
+        root.removeHandler(prefect_console)
+        root.removeHandler(other)
+
+
+def test_prefect_logging_setup_keeps_our_root_logger() -> None:
+    # Prefect configures logging when it is imported; if it does not recognise a user handler on
+    # the root logger it resets root to WARNING with its own console handler, and INFO events
+    # never reach runs/<id>/logs.jsonl.
+    from prefect.logging.configuration import setup_logging
+
+    hwlog.configure_logging("INFO", json_console=True)
+    setup_logging(incremental=False)
+    root = logging.getLogger()
+    names = [type(h).__name__ for h in root.handlers]  # pytest adds its capture handlers
+    assert root.level == logging.INFO
+    assert "StderrConsoleHandler" in names and "PrefectConsoleHandler" not in names

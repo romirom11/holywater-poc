@@ -88,3 +88,72 @@ def test_unknown_vendor_rejected_by_schema_and_registry(config: PipelineConfig) 
 def test_judge_without_key_is_noop(config: PipelineConfig) -> None:
     registry = ProviderRegistry(config, _secrets(openrouter_api_key="o"), ffmpeg=FFmpeg())
     assert isinstance(registry.judge(), NoopJudge)
+
+
+def _with(config: PipelineConfig, **sections: dict[str, object]) -> PipelineConfig:
+    raw = config.model_dump(mode="json")
+    for path, value in sections.items():
+        section, key = path.split("__")
+        raw[section][key] = value
+    return PipelineConfig.model_validate(raw)
+
+
+def test_dry_run_still_checks_capabilities_without_keys(config: PipelineConfig) -> None:
+    bad = _with(config, llm__provider="fal")
+    registry = ProviderRegistry(bad, _secrets(), ffmpeg=FFmpeg(), dry_run=True)
+    with pytest.raises(ConfigError, match="no llm capability"):
+        registry.llm(bad.llm.provider)
+    with pytest.raises(ConfigError, match="no lipsync capability"):
+        registry.lipsync("openrouter")
+    with pytest.raises(ConfigError, match="unknown provider"):
+        registry.resolve(VideoProvider, "replicate")
+
+
+def test_vendors_get_per_capability_timeouts_and_knobs(config: PipelineConfig) -> None:
+    raw = config.model_dump(mode="json")
+    raw["retries"]["timeouts_s"] = {"llm": 11, "video": 222, "tts": 33, "stt": 44, "judge": 5}
+    raw["providers"]["openrouter"].update(
+        download_attempts=5, video_usd_per_s={"480p": 0.5, "720p": 1.0}
+    )
+    raw["providers"]["fal"]["download_attempts"] = 2
+    cfg = PipelineConfig.model_validate(raw)
+    registry = ProviderRegistry(cfg, _secrets(openrouter_api_key="o", fal_key="f"), ffmpeg=FFmpeg())
+    openrouter = registry.resolve(VideoProvider, "openrouter")
+    assert (openrouter.timeout_s, openrouter.llm_timeout_s) == (222, 11)
+    assert (openrouter.tts_timeout_s, openrouter.stt_timeout_s) == (33, 44)
+    assert openrouter.download_attempts == 5
+    assert dict(openrouter.video_usd_per_s) == {"480p": 0.5, "720p": 1.0}
+    fal = registry.resolve(VideoProvider, "fal")
+    assert (fal.timeout_s, fal.tts_timeout_s, fal.stt_timeout_s) == (222, 33, 44)
+    assert fal.download_attempts == 2
+
+
+def test_blank_keys_are_missing_secrets(config: PipelineConfig) -> None:
+    registry = ProviderRegistry(
+        config, _secrets(openrouter_api_key="", fal_key="   "), ffmpeg=FFmpeg()
+    )
+    with pytest.raises(ConfigError, match="OPENROUTER_API_KEY"):
+        registry.resolve(LLMProvider, "openrouter")
+    with pytest.raises(ConfigError, match="FAL_KEY"):
+        registry.resolve(VideoProvider, "fal")
+
+
+def test_blank_judge_key_is_noop(config: PipelineConfig) -> None:
+    registry = ProviderRegistry(
+        config, _secrets(openrouter_api_key="o", typesafe_api_key=" "), ffmpeg=FFmpeg()
+    )
+    judge = registry.judge()
+    assert isinstance(judge, NoopJudge) and judge.model == "noop"
+
+
+def test_judge_gets_the_judge_timeout(config: PipelineConfig) -> None:
+    pytest.importorskip("typesafe_sdk")
+    from holywater.providers.typesafe import TypeSafeJudge
+
+    registry = ProviderRegistry(
+        config, _secrets(openrouter_api_key="o", typesafe_api_key="ts-key"), ffmpeg=FFmpeg()
+    )
+    judge = registry.judge()
+    assert isinstance(judge, TypeSafeJudge)
+    assert judge.timeout_s == config.retries.timeouts_s.judge
+    assert judge.model == config.judge.model
