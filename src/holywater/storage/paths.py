@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from holywater.observability.errors import ConfigError
+
+# A run id is one path segment under `runs/`: no separators, no leading dot, at most 64 chars.
+RUN_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+_RUN_ID_RE = re.compile(RUN_ID_PATTERN)
 
 
 def new_run_id() -> str:
@@ -14,11 +21,25 @@ def new_run_id() -> str:
     return f"{stamp}-{secrets.token_hex(3)}"
 
 
+def validate_run_id(run_id: str) -> str:
+    """Return `run_id` unchanged, or raise `ConfigError` if it could escape `runs/`."""
+    if not _RUN_ID_RE.fullmatch(run_id):
+        msg = (
+            f"invalid run id {run_id!r}: use 1-64 letters, digits, '.', '_' or '-', "
+            "starting with a letter or digit"
+        )
+        raise ConfigError(msg, context={"run_id": run_id, "pattern": RUN_ID_PATTERN})
+    return run_id
+
+
 @dataclass(frozen=True)
 class RunPaths:
     runs_dir: Path
     run_id: str
     final_name: str = "final.mp4"
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
 
     @property
     def root(self) -> Path:

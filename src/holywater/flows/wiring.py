@@ -60,7 +60,7 @@ def build_deps(
 ) -> PipelineDeps:
     if not FFmpeg.is_available():
         raise ConfigError("ffmpeg/ffprobe not found on PATH; install ffmpeg first")
-    ffmpeg = FFmpeg(timeout_s=config.retries.timeouts_s.video)
+    ffmpeg = FFmpeg(timeout_s=config.retries.timeouts_s.ffmpeg)
     engine = make_engine(db_path or config.storage.db_path)
     init_db(engine)
     repo = RunRepository(engine)
@@ -101,14 +101,42 @@ def build_deps(
 
 
 def git_sha() -> str | None:
+    """Short HEAD sha stored on the run, with `-dirty` when the working tree has uncommitted or
+    untracked changes (the code that ran is then not that commit); None (with a WARNING) outside
+    a git checkout."""
+    head = _git("rev-parse", "--short", "HEAD")
+    if not head:
+        return None
+    status = _git("status", "--porcelain")
+    if status is None:  # unknown: say so rather than claim a clean tree
+        return f"{head}-unknown"
+    return f"{head}-dirty" if status else head
+
+
+def _git(*args: str) -> str | None:
+    """stdout of one git command (stripped), or None with a WARNING when it cannot run."""
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", *args],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning(
+            "wiring.git_sha_unavailable",
+            command=args[0],
+            error=type(exc).__name__,
+            message=str(exc),
+        )
         return None
-    return out.stdout.strip() or None if out.returncode == 0 else None
+    if out.returncode != 0:
+        log.warning(
+            "wiring.git_sha_unavailable",
+            command=args[0],
+            returncode=out.returncode,
+            stderr=out.stderr[:200],
+        )
+        return None
+    return out.stdout.strip()

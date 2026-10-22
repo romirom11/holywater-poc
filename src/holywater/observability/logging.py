@@ -2,6 +2,8 @@
 
 - structlog on top of stdlib so that third-party loggers (prefect, httpx, warnings) share the
   same processors and sinks;
+- one console sink on stderr: human-readable in a TTY, JSON lines otherwise (stdout is kept for
+  command results such as the final video path);
 - `logging.captureWarnings(True)` so no warning is ever lost;
 - a per-run JSONL file sink added/removed around a run;
 - run context (run_id, stage, attempt) bound via contextvars.
@@ -29,7 +31,7 @@ _SHARED_PROCESSORS: list[Any] = [
 ]
 
 _configured = False
-# Root plus loggers that do not propagate to root (Prefect keeps its own handlers).
+# Root plus `prefect`, which some Prefect versions stop from propagating to root.
 _SINK_LOGGERS = ("", "prefect")
 
 
@@ -49,7 +51,7 @@ def configure_logging(level: str = "INFO", *, json_console: bool | None = None) 
         cache_logger_on_first_use=False,
     )
 
-    console = logging.StreamHandler(sys.stderr)
+    console = StderrConsoleHandler()
     console.setFormatter(_formatter(json_output=json_console))
 
     root = logging.getLogger()
@@ -66,8 +68,26 @@ def configure_logging(level: str = "INFO", *, json_console: bool | None = None) 
     # Noisy third-party loggers stay at INFO regardless of our level.
     for name in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(name).setLevel(max(logging.WARNING, root.level))
+    # If Prefect is already imported its root console handler would print every record twice.
+    remove_foreign_console_handlers()
 
     _configured = True
+
+
+class StderrConsoleHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """Writes to whatever `sys.stderr` is at emit time (as stdlib's `lastResort` does), so a
+    swapped stream (click's CliRunner, pytest capture) never leaves it writing to a closed file.
+
+    The name must not start with `_`: Prefect's `setup_logging` keeps the root logger as it is
+    only when it finds a "user" handler there, and it skips handler classes named `_...`.
+    """
+
+    def __init__(self) -> None:
+        logging.Handler.__init__(self)
+
+    @property
+    def stream(self) -> Any:
+        return sys.stderr
 
 
 def _formatter(*, json_output: bool) -> logging.Formatter:
@@ -85,12 +105,28 @@ def _formatter(*, json_output: bool) -> logging.Formatter:
     )
 
 
+class _OncePerRecord(logging.Filter):
+    """The sink hangs on several loggers; a record that propagates from one to the next (e.g.
+    `prefect.*` -> root) reaches it more than once and is written only the first time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last: logging.LogRecord | None = None
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record is self._last:
+            return False
+        self._last = record
+        return True
+
+
 def add_file_sink(path: Path, level: str = "DEBUG") -> logging.Handler:
     """Attach a JSONL sink (one JSON object per line). Caller removes it via `remove_sink`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setLevel(level.upper())
     handler.setFormatter(_formatter(json_output=True))
+    handler.addFilter(_OncePerRecord())
     for name in _SINK_LOGGERS:
         logging.getLogger(name).addHandler(handler)
     return handler
@@ -104,15 +140,18 @@ def remove_sink(handler: logging.Handler) -> None:
 
 
 def remove_foreign_console_handlers() -> None:
-    """Drop console handlers other libraries (Prefect) attach to the root logger.
+    """Drop the console handler Prefect attaches to the root logger.
 
     Prefect installs its own root console handler when it is imported, which would print every
-    one of our records a second time. Its own `prefect.*` loggers keep their handlers.
+    one of our records a second time; its records still reach our console via the root logger.
+    Its own `prefect.*` loggers keep their handlers, and other root handlers (e.g. pytest's log
+    capture) are left alone.
     """
     root = logging.getLogger()
     for handler in list(root.handlers):
-        is_ours = getattr(handler, "_hw_console", False) or isinstance(handler, logging.FileHandler)
-        if not is_ours and isinstance(handler, logging.StreamHandler):
+        if type(handler).__module__.startswith("prefect.") and isinstance(
+            handler, logging.StreamHandler
+        ):
             root.removeHandler(handler)
 
 

@@ -1,4 +1,8 @@
-"""SQLModel tables. Enum-valued columns are stored as plain strings (`StrEnum.value`)."""
+"""SQLModel tables. Enum-valued columns are stored as plain strings (`StrEnum.value`).
+
+New columns need a default (or must be nullable): `db.init_db` adds them to an existing DB file
+with `ALTER TABLE ... ADD COLUMN` (see `db._add_missing_columns`).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
+
+from holywater.domain.enums import AttemptStatus
 
 
 def _now() -> datetime:
@@ -17,6 +23,7 @@ class Run(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     tag: str | None = Field(default=None, index=True)
+    dry_run: bool = False  # fake providers: never pooled with real runs under one tag
     input_text: str
     language: str | None = None
     config_hash: str
@@ -44,8 +51,9 @@ class Stage(SQLModel, table=True):
     attempt: int = 0  # how many times the flow entered the stage (per shot for shot stages)
     retries: int = 0  # Prefect task retries on typed retryable errors inside the stage
     input_hash: str | None = None
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    started_at: datetime | None = None  # of the latest entry
+    finished_at: datetime | None = None  # of the latest entry
+    total_duration_s: float = 0.0  # summed over all entries (nested stages are inclusive)
     error_type: str | None = None
     error_json: str | None = None
 
@@ -80,7 +88,11 @@ class ShotAttempt(SQLModel, table=True):
     duration_s: float | None = None
     resolution: str
     cost_usd: float = 0.0
-    status: str = "generated"
+    cost_is_estimate: bool = True
+    status: str = AttemptStatus.GENERATED.value
+    reason: str | None = None  # why the attempt was abandoned (billed, no clip collected)
+    size_bytes: int | None = None  # of the clip at `path` when the attempt was recorded
+    sha256: str | None = None  # of the clip at `path`; resume checks it before reusing the file
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -106,8 +118,12 @@ class JudgeDecision(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     run_id: str = Field(foreign_key="runs.id", index=True)
     stage: str
+    shot_id: int | None = None
     question: str
     answer: str
+    # What the flow did with the answer: pass | rewrite | unavailable (preflight), classified |
+    # unavailable | heuristic (failure classifier).
+    decision: str | None = None
     probabilities_json: str
     model_version: str | None = None
     latency_ms: int | None = None

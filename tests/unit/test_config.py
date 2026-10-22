@@ -90,3 +90,82 @@ def test_quality_tactic_knobs_have_defaults_and_bounds() -> None:
     assert (q.shot_duration_tolerance_s, q.truncated_window_widen_s) == (1.0, 1.0)
     with pytest.raises(ValueError):
         QualityConfig(shot_duration_tolerance_s=-1)
+
+
+def test_speech_rate_and_audio_peak_knobs(tmp_path: Path) -> None:
+    from holywater.config.schema import QualityConfig
+
+    q = load_config(REPO_CONFIG).quality
+    assert (q.speech_chars_per_s, q.min_audio_peak_db) == (15.0, -50.0)
+    assert (QualityConfig().speech_chars_per_s, QualityConfig().min_audio_peak_db) == (15.0, -50.0)
+    for bad in ("speech_chars_per_s: 0", "min_audio_peak_db: 3"):
+        path = tmp_path / "bad.yaml"
+        key = bad.split(":")[0]
+        text = REPO_CONFIG.read_text()
+        line = next(ln for ln in text.splitlines() if ln.strip().startswith(f"{key}:"))
+        path.write_text(text.replace(line, f"  {bad}"))
+        with pytest.raises(ConfigError, match="validation failed"):
+            load_config(path)
+
+
+def test_final_check_margin_and_stray_speech_knobs(tmp_path: Path) -> None:
+    from holywater.config.schema import QualityConfig, StraySpeechConfig
+
+    q = load_config(REPO_CONFIG).quality
+    assert q.final_check_margin_s == 0.5
+    assert q.stray_speech == StraySpeechConfig(action="warn", max_words=2)
+    assert QualityConfig().stray_speech.action == "warn"  # Whisper hears words in ambience
+    for bad in (
+        "final_check_margin_s: -0.1",
+        "stray_speech: {action: drop, max_words: 2}",
+        "stray_speech: {action: warn, max_words: -1}",
+    ):
+        key = bad.split(":")[0]
+        text = REPO_CONFIG.read_text()
+        line = next(ln for ln in text.splitlines() if ln.strip().startswith(f"{key}:"))
+        path = tmp_path / "bad.yaml"
+        path.write_text(text.replace(line, f"  {bad}"))
+        with pytest.raises(ConfigError, match="validation failed"):
+            load_config(path)
+
+
+def test_tts_voices_by_gender() -> None:
+    from holywater.config.schema import TTSConfig
+    from holywater.domain.enums import VoiceGender
+
+    tts = load_config(REPO_CONFIG).audio.tts
+    assert tts.voices == {VoiceGender.FEMALE: "sarah", VoiceGender.MALE: "george"}
+    assert tts.voice_for(VoiceGender.MALE) == "george"
+    only_default = TTSConfig(model="m", voice="sarah")
+    assert only_default.voice_for(VoiceGender.MALE) == "sarah"  # no entry -> the default voice
+    with pytest.raises(ValueError):
+        TTSConfig(model="m", voices={"robot": "x"})  # type: ignore[dict-item]
+
+
+def test_quality_shots_knob_is_gone_and_duration_stays_within_task_bounds(
+    tmp_path: Path,
+) -> None:
+    """Shot count 1..2 is a task invariant (domain), not a knob; the final length knob may only
+    narrow the task's 8..30 s."""
+    text = REPO_CONFIG.read_text()
+    with_shots = tmp_path / "shots.yaml"
+    with_shots.write_text(text.replace("quality:\n", "quality:\n  shots: {min: 1, max: 2}\n"))
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(with_shots)
+    assert exc_info.value.context["errors"][0]["loc"] == ("quality", "shots")
+    for bounds in ("{min: 5, max: 30}", "{min: 8, max: 40}"):
+        path = tmp_path / "bounds.yaml"
+        path.write_text(text.replace("{min: 8, max: 30}", bounds))
+        with pytest.raises(ConfigError, match="validation failed"):
+            load_config(path)
+    narrower = tmp_path / "narrow.yaml"
+    narrower.write_text(text.replace("{min: 8, max: 30}", "{min: 10, max: 20}"))
+    assert load_config(narrower).quality.duration_s.max == 20
+
+
+def test_ffmpeg_timeout_knob() -> None:
+    from holywater.config.schema import TimeoutsConfig
+
+    assert load_config(REPO_CONFIG).retries.timeouts_s.ffmpeg == 600
+    with pytest.raises(ValueError):
+        TimeoutsConfig(ffmpeg=0)

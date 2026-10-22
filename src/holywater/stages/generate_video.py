@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from holywater.config.schema import VideoConfig
-from holywater.domain.artifacts import VideoArtifact
+from holywater.domain.artifacts import ProviderCost, VideoArtifact
 from holywater.domain.enums import AudioStrategy
 from holywater.domain.script import Script, Shot
 from holywater.media import FFmpeg
+from holywater.observability.errors import BilledJobError, MediaError, ProviderError
 from holywater.observability.logging import get_logger
 from holywater.prompts import PromptTemplate, load_prompt
 from holywater.providers.base import VideoProvider, VideoRequest
 
 log = get_logger(__name__)
+
+# `ProviderCost.capability` of a video call (the flow maps it to `video.provider`).
+VIDEO_CAPABILITY = "video"
+_STRICT_SUFFIX = "/dialogue_strict"
 
 _LANGUAGE_NAMES = {
     "uk": "Ukrainian",
@@ -65,19 +71,40 @@ def build_shot_prompt(
         return RenderedPrompt(text=text, version=f"{prompt.version_tag}/no_dialogue")
     d = script.dialogue
     strict_block = (" " + prompt.render("strict", line=d.text)) if strict else ""
+    start_s, end_s = _fmt(d.start_s), _fmt(d.end_s)
+    # No empty "0–0s" or "8–8s" segments: the scene leads into the line only when the line starts
+    # after 0, and the silent hold is described only when the line ends before the shot does.
+    lead_in = prompt.render(
+        "lead_in" if d.start_s > 0 else "lead_in_at_start",
+        start_s=start_s,
+        visual_prompt=shot.visual_prompt,
+        camera=shot.camera,
+    )
+    tail = (
+        " " + prompt.render("tail", end_s=end_s, duration_s=shot.duration_s, speaker=d.speaker)
+        if d.end_s < shot.duration_s
+        else ""
+    )
     text = prompt.render(
         "dialogue",
         **common,
-        start_s=_fmt(d.start_s),
-        end_s=_fmt(d.end_s),
+        lead_in=lead_in + " ",
+        tail=tail,
+        start_s=start_s,
+        end_s=end_s,
         speaker=d.speaker,
         line=d.text,
         emotion=d.emotion,
         language_name=_LANGUAGE_NAMES.get(d.language, d.language),
         strict_block=strict_block,
     )
-    suffix = "/dialogue_strict" if strict else "/dialogue"
+    suffix = _STRICT_SUFFIX if strict else "/dialogue"
     return RenderedPrompt(text=text, version=prompt.version_tag + suffix)
+
+
+def is_strict(prompt_version: str) -> bool:
+    """Whether a stored `prompt_version` was rendered with the strict-line suffix."""
+    return prompt_version.endswith(_STRICT_SUFFIX)
 
 
 def generate_shot(
@@ -90,7 +117,12 @@ def generate_shot(
     strategy: AudioStrategy,
     strict: bool = False,
     seed: int | None = None,
+    on_cost: Callable[[ProviderCost], None] | None = None,
 ) -> VideoArtifact:
+    """One paid clip. Every charge is reported to `on_cost` as soon as it is known — the finished
+    job before the clip is probed, and the `spent_usd` of a failed job before the error leaves —
+    so a later failure (and the task retry it triggers) never loses it. A paid clip that ffprobe
+    cannot read raises `BilledJobError` (not retried by the task: a retry would buy a new job)."""
     rendered = build_shot_prompt(script, shot, strategy=strategy, prompt=deps.prompt, strict=strict)
     request = VideoRequest(
         model=deps.config.model,
@@ -113,8 +145,57 @@ def generate_shot(
         resolution=deps.config.resolution.value,
         prompt_version=rendered.version,
     )
-    result = deps.video.generate(request, dest=dest)
-    info = deps.ffmpeg.probe(result.path)
+    try:
+        result = deps.video.generate(request, dest=dest)
+    except ProviderError as exc:
+        if exc.spent_usd is not None and on_cost is not None:
+            log.warning(
+                "cost.spent_on_error",
+                shot_id=shot.id,
+                attempt=attempt,
+                error=type(exc).__name__,
+                request_id=exc.request_id,
+                spent_usd=exc.spent_usd,
+                estimate=exc.spent_is_estimate,
+            )
+            on_cost(
+                ProviderCost(
+                    capability=VIDEO_CAPABILITY,
+                    model=exc.model or deps.config.model,
+                    units=float(shot.duration_s),
+                    cost_usd=exc.spent_usd,
+                    is_estimate=exc.spent_is_estimate,
+                    shot_id=shot.id,
+                )
+            )
+        raise
+    if on_cost is not None:
+        on_cost(
+            ProviderCost(
+                capability=VIDEO_CAPABILITY,
+                model=result.model,
+                units=float(shot.duration_s),
+                cost_usd=result.cost_usd,
+                is_estimate=result.cost_is_estimate,
+                shot_id=shot.id,
+            )
+        )
+    try:
+        info = deps.ffmpeg.probe(result.path)
+    except MediaError as exc:
+        # The job is paid and its cost reported above. A MediaError is retryable, and a task retry
+        # would buy a new clip; BilledJobError is not, so the flow's attempt budget decides.
+        job_id = result.request_id or "unknown"
+        msg = f"video job {job_id} was paid but its clip is unreadable: {exc.message}"
+        raise BilledJobError(
+            msg,
+            provider=deps.config.provider,
+            model=result.model,
+            job_id=job_id,
+            spent_usd=result.cost_usd,
+            spent_is_estimate=result.cost_is_estimate,
+            context={"path": str(result.path)},
+        ) from exc
     log.info(
         "generate_video.done",
         shot_id=shot.id,

@@ -9,7 +9,8 @@ Every request carries the `model` to use, so one vendor instance serves any numb
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -17,6 +18,9 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from holywater.domain.enums import Resolution
+from holywater.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 # -- LLM --------------------------------------------------------------------------------------
 
@@ -44,7 +48,8 @@ class LLMProvider(Protocol):
         temperature: float | None = None,
     ) -> LLMResult[T]:
         """Return a schema-validated object. Raises `ProviderError` on API failure and
-        `ValueError` when the model's output does not validate against `schema`."""
+        `StructuredOutputError` (a `ValueError`) when the output is truncated or does not
+        validate against `schema`; that call was billed, see `spent_usd`."""
         ...
 
 
@@ -76,7 +81,11 @@ class VideoResult:
 @runtime_checkable
 class VideoProvider(Protocol):
     def generate(self, request: VideoRequest, *, dest: Path) -> VideoResult:
-        """Generate a clip and download it to `dest`."""
+        """Generate a clip and download it to `dest`.
+
+        Idempotent reads (job polls, the download of a finished job) are retried inside the
+        vendor. A job that was accepted but whose result cannot be collected raises
+        `BilledJobError`; submitting a new paid job is left to the caller."""
         ...
 
 
@@ -158,6 +167,8 @@ class JudgeAnswer:
     model_version: str | None = None
     latency_ms: int | None = None
     available: bool = True
+    cost_usd: float = 0.0
+    cost_is_estimate: bool = True
 
     @property
     def confidence(self) -> float:
@@ -170,6 +181,11 @@ class JudgeProvider(Protocol):
 
     @property
     def enabled(self) -> bool: ...
+
+    @property
+    def model(self) -> str:
+        """The judge model that actually answers (`"noop"` when none does), for the report."""
+        ...
 
     def ask_bool(self, state: str, question: str) -> JudgeAnswer:
         """`answer` is "yes" or "no"; `probabilities` holds both."""
@@ -188,6 +204,7 @@ class NoopJudge:
     """Used when Jev is disabled or unreachable: every answer is `unknown`/unavailable."""
 
     enabled = False
+    model = "noop"
 
     def ask_bool(self, state: str, question: str) -> JudgeAnswer:
         return JudgeAnswer(question=question, answer="unknown", available=False)
@@ -205,3 +222,29 @@ class NoopJudge:
 RETRYABLE_HTTP_STATUS: frozenset[int] = frozenset(
     {408, 409, 425, 429, 500, 502, 503, 504, 524, 529}
 )
+
+# Wording vendors use when they refuse the prompt itself (moderation / content policy).
+_PROMPT_REJECTION_RE = re.compile(
+    r"moderat|content[ _-]?polic|safety|flagged|nsfw|sensitive content|policy violation"
+    r"|prohibited|inappropriate|refus",
+    re.IGNORECASE,
+)
+
+
+def looks_like_prompt_rejection(text: str) -> bool:
+    """True when an error text says the prompt was refused (-> `PromptRejectedError`)."""
+    return bool(_PROMPT_REJECTION_RE.search(text))
+
+
+def table_price(
+    table: Mapping[str, float], key: str, *, provider: str, model: str, unit: str
+) -> float:
+    """Price from a vendor estimate table. An unknown key logs `cost.unknown_price` and falls
+    back to the most expensive entry, so spend is over- rather than silently under-reported."""
+    if key in table:
+        return table[key]
+    fallback = max(table.values(), default=0.0)
+    log.warning(
+        "cost.unknown_price", provider=provider, model=model, key=key, unit=unit, fallback=fallback
+    )
+    return fallback

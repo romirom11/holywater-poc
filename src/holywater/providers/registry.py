@@ -1,8 +1,9 @@
 """Resolves `provider:` names from config to vendor instances that implement a capability.
 
 Vendors are built lazily and once per run, so switching `video.provider` from `fal` to
-`openrouter` in `pipeline.yaml` is the whole change. A vendor that lacks the requested
-capability (e.g. `fal` for the LLM) is a `ConfigError` raised before any paid call.
+`openrouter` in `pipeline.yaml` is the whole change. An unknown vendor, or one that lacks the
+requested capability (e.g. `fal` for the LLM), is a `ConfigError` raised before any paid call,
+also in `--dry-run` (which then substitutes fakes and needs no keys).
 """
 
 from __future__ import annotations
@@ -71,12 +72,14 @@ class ProviderRegistry:
         """Return the vendor instance for `vendor`, checked to implement `capability`."""
         cap_name = _CAPABILITY_NAMES.get(capability, capability.__name__)
         if self._dry_run:
+            # Same checks as a real run (from the classes, so no keys are needed), then a fake.
+            _check_known(vendor)
+            if not self._vendor_supports(vendor, capability):
+                raise _missing_capability(vendor, capability, cap_name)
             return self._fake(capability)
         instance = self._vendor(vendor)
         if not isinstance(instance, capability):
-            supported = [v for v in VENDORS if self._vendor_supports(v, capability)]
-            msg = f"provider {vendor!r} has no {cap_name} capability; use one of {supported}"
-            raise ConfigError(msg, context={"capability": cap_name, "provider": vendor})
+            raise _missing_capability(vendor, capability, cap_name)
         log.debug("registry.resolved", capability=cap_name, provider=vendor)
         return instance
 
@@ -85,7 +88,9 @@ class ProviderRegistry:
             from holywater.providers.base import NoopJudge
             from holywater.providers.fake import FakeJudge
 
-            return FakeJudge() if self._config.judge.enabled else NoopJudge()
+            if not self._config.judge.enabled:
+                return NoopJudge()
+            return FakeJudge(model=f"fake/{self._config.judge.model}")
         from holywater.providers.typesafe import build_judge
 
         return build_judge(
@@ -99,9 +104,7 @@ class ProviderRegistry:
     def _vendor(self, name: str) -> Any:
         if name in self._vendors:
             return self._vendors[name]
-        if name not in VENDORS:
-            msg = f"unknown provider {name!r}; known providers: {list(VENDORS)}"
-            raise ConfigError(msg, context={"provider": name})
+        _check_known(name)
         instance = self._build(name)
         self._vendors[name] = instance
         log.info("registry.vendor_ready", provider=name)
@@ -114,10 +117,14 @@ class ProviderRegistry:
             from holywater.providers.fal import FalProvider
 
             assert self._secrets.fal_key is not None
+            fal = self._config.providers.fal
             return FalProvider(
                 api_key=self._secrets.fal_key.get_secret_value(),
                 timeout_s=timeouts.video,
-                lipsync_sync_mode=self._config.providers.fal.lipsync_sync_mode,
+                tts_timeout_s=timeouts.tts,
+                stt_timeout_s=timeouts.stt,
+                lipsync_sync_mode=fal.lipsync_sync_mode,
+                download_attempts=fal.download_attempts,
             )
         if name == "openrouter":
             self._secrets.require("openrouter_api_key")
@@ -130,7 +137,11 @@ class ProviderRegistry:
                 base_url=settings.base_url,
                 timeout_s=timeouts.video,
                 llm_timeout_s=timeouts.llm,
+                tts_timeout_s=timeouts.tts,
+                stt_timeout_s=timeouts.stt,
                 video_poll_interval_s=settings.video_poll_interval_s,
+                download_attempts=settings.download_attempts,
+                video_usd_per_s={r.value: p for r, p in settings.video_usd_per_s.items()},
             )
         msg = f"no builder for provider {name!r}"  # pragma: no cover - guarded by VENDORS
         raise ConfigError(msg)
@@ -158,6 +169,18 @@ class ProviderRegistry:
             }
             self._vendors[key] = builders[key]()
         return self._vendors[key]
+
+
+def _check_known(name: str) -> None:
+    if name not in VENDORS:
+        msg = f"unknown provider {name!r}; known providers: {list(VENDORS)}"
+        raise ConfigError(msg, context={"provider": name})
+
+
+def _missing_capability(vendor: str, capability: Any, cap_name: str) -> ConfigError:
+    supported = [v for v in VENDORS if ProviderRegistry._vendor_supports(v, capability)]
+    msg = f"provider {vendor!r} has no {cap_name} capability; use one of {supported}"
+    return ConfigError(msg, context={"capability": cap_name, "provider": vendor})
 
 
 def _protocol_methods(protocol: type) -> list[str]:
