@@ -3,7 +3,7 @@ version: 1
 
 llm:
   model: "anthropic/claude-sonnet-5.5"       # any OpenRouter model id with structured outputs
-  temperature: 0.7
+  temperature: null                            # null = not sent; Claude 5.x endpoints do not accept it
   max_attempts: 3                              # retries on invalid schema / line-substring violation
 
 judge:                                         # TypeSafe Jev; disabled or no key -> NoopJudge

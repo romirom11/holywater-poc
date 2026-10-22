@@ -41,9 +41,14 @@ class OpenRouterLLM:
         )
 
     def complete_structured(
-        self, *, system: str, user: str, schema: type[T], temperature: float
+        self, *, system: str, user: str, schema: type[T], temperature: float | None = None
     ) -> LLMResult[T]:
         json_schema = schema.model_json_schema()
+        # Only send parameters we really need: with `require_parameters` every extra one narrows
+        # the set of eligible endpoints (Claude 5.x, for example, has no `temperature`).
+        optional: dict[str, Any] = {}
+        if temperature is not None:
+            optional["temperature"] = temperature
         started = time.monotonic()
         log.debug("llm.request", model=self.model, schema=schema.__name__, chars=len(user))
         try:
@@ -53,8 +58,8 @@ class OpenRouterLLM:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                temperature=temperature,
                 max_tokens=self.max_tokens,
+                **optional,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {

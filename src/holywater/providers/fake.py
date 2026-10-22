@@ -55,7 +55,7 @@ class FakeLLM:
     calls: int = 0
 
     def complete_structured(
-        self, *, system: str, user: str, schema: type[T], temperature: float
+        self, *, system: str, user: str, schema: type[T], temperature: float | None = None
     ) -> LLMResult[T]:
         self.calls += 1
         idea_text = _extract_idea(user)

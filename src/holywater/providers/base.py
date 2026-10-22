@@ -34,7 +34,7 @@ class LLMProvider(Protocol):
         system: str,
         user: str,
         schema: type[T],
-        temperature: float,
+        temperature: float | None = None,
     ) -> LLMResult[T]:
         """Return a schema-validated object. Raises `ProviderError` on API failure and
         `ValueError` when the model's output does not validate against `schema`."""

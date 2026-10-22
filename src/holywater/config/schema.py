@@ -18,7 +18,8 @@ class _Strict(BaseModel):
 
 class LLMConfig(_Strict):
     model: str
-    temperature: float = Field(default=0.7, ge=0, le=2)
+    # None = do not send the parameter (Claude 5.x endpoints reject `temperature`).
+    temperature: float | None = Field(default=None, ge=0, le=2)
     max_attempts: int = Field(default=3, ge=1, le=10)
     base_url: str = "https://openrouter.ai/api/v1"
 

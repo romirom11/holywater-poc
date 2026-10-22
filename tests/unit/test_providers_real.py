@@ -192,6 +192,16 @@ def test_openrouter_structured_output_roundtrip() -> None:
     assert (result.input_tokens, result.output_tokens) == (100, 50)
 
 
+def test_openrouter_omits_temperature_when_none() -> None:
+    llm = OpenRouterLLM(api_key="k", model="m")
+    script_json = Script.model_validate(make_script()).model_dump_json()
+    with patch.object(
+        llm._client.chat.completions, "create", return_value=_completion(script_json)
+    ) as create:
+        llm.complete_structured(system="s", user="u", schema=Script)
+    assert "temperature" not in create.call_args.kwargs
+
+
 def test_openrouter_unwraps_single_key_envelope() -> None:
     llm = OpenRouterLLM(api_key="k", model="m")
     wrapped = '{"Script": ' + Script.model_validate(make_script()).model_dump_json() + "}"
